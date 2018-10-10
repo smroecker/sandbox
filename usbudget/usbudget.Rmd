@@ -55,12 +55,15 @@ files <- lapply(links, function(x) read.csv(x, stringsAsFactors = FALSE))
 
 
 # budget authority (e.g. what the federal government is allowed to spend)
-ba <- files[[1]]
-names(ba) <- gsub("^X", "", names(ba))
-
-# convert dollars from string to numeric
 vars <- as.character(1976:2023)
-ba[vars] <- lapply(ba[vars], function(x) as.numeric(gsub(",", "", x)) * 1000)
+files <- lapply(files, function(x) {
+  # remove X from fiscal years
+  names(x) = gsub("^X", "", names(x))
+  
+  # convert dollars from string to numeric
+  x[vars] = lapply(x[vars], function(y) as.numeric(gsub(",", "", y)) * 1000)
+  return(x)
+})
 
 ```
 
