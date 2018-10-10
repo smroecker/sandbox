@@ -1,0 +1,149 @@
+---
+title: An introduction to the US Federal Budget with R
+author: "Stephen Roecker"
+date: "10/10/2018"
+output:
+  html_document:
+editor_options: 
+  chunk_output_type: console
+---
+
+# Abstract
+
+The budget of the United States Federal Government is often a contentious issue. This presentation will provide a 'rough' introduction, covering where to get the data, provide a breakdown of the numbers, and links to other resources. 
+
+- ![Congressional Budget Office](https://www.cbo.gov/topics/budget)
+- ![article](https://nycdatascience.com/blog/student-works/visualize-the-annual-us-federal-budget-since-1962/)
+- ![course notes](http://eml.berkeley.edu/~saez/course131/budget_ch04.pdf)
+
+# Load packages
+
+```{r packages}
+library(usbudget)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lattice)
+```
+
+
+
+# ![GitHub Snapshot](https://github.com/seankross/usbudget)
+
+This is an old FY15 snapshot.
+
+```{r ghdata}
+devtools::install_github("seankross/usbudget")
+
+data("budauth")
+ba <- budauth
+names(ba) <- gsub("^X", "", names(ba))
+
+```
+
+
+
+# ![FY19 Whitehouse Data](https://www.whitehouse.gov/omb/budget)
+
+```{r whdata}
+
+links <- list(budauth = "https://www.whitehouse.gov/wp-content/uploads/2018/02/budauth-fy2019.csv",
+              outlays = "https://www.whitehouse.gov/wp-content/uploads/2018/02/outlays-fy2019.csv",
+              receipts = "https://www.whitehouse.gov/wp-content/uploads/2018/02/receipts-fy2019.csv"
+              )
+files <- lapply(links, function(x) read.csv(x, stringsAsFactors = FALSE))
+
+
+# budget authority (e.g. what the federal government is allowed to spend)
+ba <- files[[1]]
+names(ba) <- gsub("^X", "", names(ba))
+
+# convert dollars from string to numeric
+vars <- as.character(1976:2023)
+ba[vars] <- lapply(ba[vars], function(x) as.numeric(gsub(",", "", x)) * 1000)
+
+```
+
+
+
+# USDA data
+
+- ![FY19](https://www.obpa.usda.gov/27nrcs2019notes.pdf)
+
+
+
+# Top 10 US Agencies
+
+```{r}
+
+group <- "Bureau.Name"
+USDA <- TRUE
+top <- 10
+title <- paste("Top", top, ifelse(group == "Bureau.Name", "US", "USDA"))
+
+gg_budget <- function(group, USDA, top, title) {
+  ba2 = {ba ->.;
+    within(., {group = .[, group]}) ->.;
+    if (USDA == TRUE) {
+      subset(., Agency.Name == "Department of Agriculture") ->.;
+      }
+    vars <- as.character(1976:2023)
+    .[c("group", vars)] ->.;
+    reshape(., direction = "long",
+            timevar = "variable", times   = vars, 
+            v.names = "value",    varying = vars
+            ) ->.;
+    subset(., value > 0) ->.;
+    aggregate(value ~ group + variable, data = ., sum, na.rm = TRUE) ->.;
+    }
+  
+  top51 = {
+    subset(ba2, variable == "2017") -> .;
+    .[order(- .$value), ] ->.;
+    head(., top) ->.;
+    }
+  
+  gg <- filter(ba2, group %in% top51$group) %>%
+    ggplot(aes(x = as.numeric(variable), y = value, col = group)) + 
+    geom_line(lwd = 2) + 
+    ylab("Dollars") + xlab("Year") +
+    ggtitle(title) +
+    scale_x_continuous(breaks = seq(1976, 2030, 8)) +
+    theme(aspect.ratio = 1)
+  
+  return(gg)
+  }
+
+gg_us   <- gg_budget(group = "Agency.Name", USDA  = FALSE, top = 10, title = "Top 10 US Agencies")
+gg_usda <- gg_budget(group = "Bureau.Name", USDA  = TRUE,  top = 5,  title = "Top 5 USDA Agencies")
+gridExtra::grid.arrange(gg_us, gg_usda, ncol = 1)
+
+
+ba2 <- {ba ->.;
+  within(., {group = Bureau.Name}) ->.;
+  subset(., Agency.Name == "Department of Agriculture") ->.;
+  vars <- as.character(1976:2020)
+  .[c("group", vars)] ->.;
+  reshape(., direction = "long",
+          timevar = "variable", times   = vars, 
+          v.names = "value",    varying = vars
+  ) ->.;
+  within(., {value = value * 1000}) ->.;
+  subset(., value > 0) ->.;
+  aggregate(value ~ group + variable, data = ., sum, na.rm = TRUE) ->.;
+}
+
+top51 <- {
+  subset(ba2, variable == "2017" & group != "Food and Nutrition Service") -> .;
+  .[order(- .$value), ] ->.;
+  head(., 5) ->.;
+}
+
+subset(ba2, group %in% top51$group) ->.;
+xyplot(data = ., x = value ~ as.numeric(variable), groups = group,
+       type = c("l", "g"), lwd = 2,
+       ylab = "Dollars", xlab = "Year",
+       main = "USDA Budget",
+       auto.key = list(space = "right")
+       )
+```
