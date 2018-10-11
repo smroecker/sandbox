@@ -12,9 +12,9 @@ editor_options:
 
 The budget of the United States Federal Government is often a contentious issue. This presentation will provide a 'rough' introduction, covering where to get the data, provide a breakdown of the numbers, and links to other resources. 
 
-- ![Congressional Budget Office](https://www.cbo.gov/topics/budget)
-- ![article](https://nycdatascience.com/blog/student-works/visualize-the-annual-us-federal-budget-since-1962/)
-- ![course notes](http://eml.berkeley.edu/~saez/course131/budget_ch04.pdf)
+- [Congressional Budget Office](https://www.cbo.gov/topics/budget)
+- [article](https://nycdatascience.com/blog/student-works/visualize-the-annual-us-federal-budget-since-1962/)
+- [course notes](http://eml.berkeley.edu/~saez/course131/budget_ch04.pdf)
 
 # Load packages
 
@@ -28,7 +28,7 @@ library(lattice)
 
 
 
-# ![GitHub Snapshot](https://github.com/seankross/usbudget)
+# [GitHub Snapshot](https://github.com/seankross/usbudget)
 
 This is an old FY15 snapshot.
 
@@ -43,7 +43,7 @@ names(ba) <- gsub("^X", "", names(ba))
 
 
 
-# ![FY19 Whitehouse Data](https://www.whitehouse.gov/omb/budget)
+# [FY19 Whitehouse Data](https://www.whitehouse.gov/omb/budget)
 
 ```{r whdata}
 
@@ -71,7 +71,7 @@ files <- lapply(files, function(x) {
 
 # USDA data
 
-- ![FY19](https://www.obpa.usda.gov/27nrcs2019notes.pdf)
+- [FY19](https://www.obpa.usda.gov/27nrcs2019notes.pdf)
 
 
 
