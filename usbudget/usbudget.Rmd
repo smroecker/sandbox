@@ -93,10 +93,15 @@ gdp <- subset(gdp, year %in% 1947:2018)
 
 # [Consumer Price Index](https://fred.stlouisfed.org/series/CPIAUCSL)
 
-```{r}
-cpi <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=1168&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=CPIAUCSL&scale=left&cosd=1947-01-01&coed=2018-09-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=0&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Annual&fam=avg&fgst=lin&fgsnd=2009-06-01&line_index=1&transformation=lin&vintage_date=2018-10-15&revision_date=2018-10-15&nd=1947-01-01", stringsAsFactors = FALSE)
-cpi$DATE <- format(as.Date(cpi$DATE), "%Y")
+```{r cpi_numbers}
+cpi_raw <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=1168&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=CPIAUCSL&scale=left&cosd=1947-01-01&coed=2018-09-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=0&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Annual&fam=avg&fgst=lin&fgsnd=2009-06-01&line_index=1&transformation=lin&vintage_date=2018-10-15&revision_date=2018-10-15&nd=1947-01-01", stringsAsFactors = FALSE)
+cpi <- cpi_raw
 names(cpi) <- c("year", "cpi")
+cpi <- within(cpi, {
+  year = format(as.Date(year), "%Y")
+  cpi  = as.numeric(cpi)
+  })
+  
 
 ```
 
@@ -203,22 +208,22 @@ top10 <- filter(bud, year == 2018) %>%
   arrange(- dollars) %>%
   head()
 
-filter(bud, Agency.Name %in% top10$Agency.Name) %>%
+gg_budget <- filter(bud, Agency.Name %in% top10$Agency.Name) %>%
   ggplot(aes(x = year, y = dollars, col = Agency.Name)) +
   geom_line(aes(lty = (year <= 2018)), lwd = 2) +
   geom_vline(xintercept = 2018) +
   scale_linetype_manual(values = c("dotted", "solid")) +
-  scale_x_continuous(breaks = seq(1880, 2030, 8)) +
+  scale_x_continuous(breaks = seq(1880, 2030, 8), limits = c(1976, 2024)) +
   theme(aspect.ratio = 1) +
   ggtitle("Top 10 US Agencies")
-
+gg_budget
 
 ```
 
 
 # Mandatory vs Discretionary Spending
 
-```{r}
+```{r man_vs_des}
 
 sp <- select(budauth, BEA.Category, as.character(1976:2023)) %>%
   gather(key = year, value = dollars, - BEA.Category) %>%
@@ -244,5 +249,28 @@ group_by(budauth, BEA.Category, Agency.Name) %>%
   mutate(pct_man = Mandatory / (Mandatory + Discretionary)) %>%
   arrange(- Mandatory) %>%
   head(20)
+
+```
+
+# Adjust for the Consumer Price Index (CPI)
+```{r cpi}
+cpi <- mutate(cpi,
+              adj = cpi[year == "2017"] / cpi,
+              year = as.integer(year)
+              )
+
+gg_adji <- inner_join(bud, cpi, by = "year") %>%
+  mutate(dollars = dollars * adj) %>%
+  filter(Agency.Name %in% top10$Agency.Name) %>%
+  ggplot(aes(x = year, y = dollars, col = Agency.Name)) +
+  geom_line(lwd = 2) +
+  geom_vline(xintercept = 2018) +
+  scale_x_continuous(breaks = seq(1880, 2030, 8), limits = c(1976, 2024)) +
+  theme(aspect.ratio = 1) +
+  ylab("dollars (adj for inflation)") +
+  ggtitle("Top 10 US Agencies")
+
+gridExtra::grid.arrange(gg_budget, gg_adji, ncol = 1)
+
 
 ```
