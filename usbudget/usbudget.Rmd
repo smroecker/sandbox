@@ -23,7 +23,7 @@ library(usbudget)
 library(dplyr)
 library(tidyr)
 library(ggplot2)
-library(lattice)
+
 ```
 
 
@@ -32,7 +32,7 @@ library(lattice)
 
 This is an old FY15 snapshot.
 
-```{r ghdata}
+```{r ghdata, echo=FALSE}
 devtools::install_github("seankross/usbudget")
 
 data("budauth")
@@ -45,6 +45,8 @@ names(ba) <- gsub("^X", "", names(ba))
 
 # [FY19 Whitehouse Data](https://www.whitehouse.gov/omb/budget)
 
+Interesting how the new numbers have only a 5 year projection.
+
 ```{r whdata}
 
 links <- list(budauth = "https://www.whitehouse.gov/wp-content/uploads/2018/02/budauth-fy2019.csv",
@@ -52,7 +54,6 @@ links <- list(budauth = "https://www.whitehouse.gov/wp-content/uploads/2018/02/b
               receipts = "https://www.whitehouse.gov/wp-content/uploads/2018/02/receipts-fy2019.csv"
               )
 files <- lapply(links, function(x) read.csv(x, stringsAsFactors = FALSE))
-
 
 # budget authority (e.g. what the federal government is allowed to spend)
 vars <- as.character(1976:2023)
@@ -65,27 +66,60 @@ files <- lapply(files, function(x) {
   return(x)
 })
 
+budauth <- files$budauth
+outlays <- files$outlays
+receipts <- files$receipts
+
 ```
 
+# [GDP](https://apps.bea.gov/iTable/iTable.cfm?ReqID=19&step=4&isuri=1&1921=flatfiles)
+
+- [FredCast](https://fred.stlouisfed.org/)
+
+```{r}
+gdp_all <- read.csv("https://apps.bea.gov/national/Release/TXT/NipaDataA.txt", stringsAsFactors = FALSE)
+gdp <- subset(gdp_all, X.SeriesCode == "A001RC")[-1]
+names(gdp) <- c("year", "dollars")
+gdp$dollars <- as.numeric(gsub(",", "", gdp$dollars)) * 1e6
+gdp <- subset(gdp, year %in% 1947:2018)
+
+# # Data from FredCast
+# gdp <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=1168&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=GNPA&scale=left&cosd=1929-01-01&coed=2017-01-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=0&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Annual&fam=avg&fgst=lin&fgsnd=2009-06-01&line_index=1&transformation=lin&vintage_date=2018-10-15&revision_date=2018-10-15&nd=1929-01-01", stringsAsFactors = FALSE)
+# gdp$DATE <- format(as.Date(gdp$DATE), "%Y")
+# names(gdp) <- c("year", "gdp")
+# gdp <- subset(gdp, year %in% 1947:2018)
+
+```
+
+# [Consumer Price Index](https://fred.stlouisfed.org/series/CPIAUCSL)
+
+```{r}
+cpi <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=1168&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=CPIAUCSL&scale=left&cosd=1947-01-01&coed=2018-09-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=0&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Annual&fam=avg&fgst=lin&fgsnd=2009-06-01&line_index=1&transformation=lin&vintage_date=2018-10-15&revision_date=2018-10-15&nd=1947-01-01", stringsAsFactors = FALSE)
+cpi$DATE <- format(as.Date(cpi$DATE), "%Y")
+names(cpi) <- c("year", "cpi")
+
+```
+
+# Save Snapshot
+
+```{r}
+save(files, gdp, cpi, file = "usbudget.RData")
+
+```
 
 
 # USDA data
 
 - [FY19](https://www.obpa.usda.gov/27nrcs2019notes.pdf)
 
-
-
-# Top 10 US Agencies
-
 ```{r}
-
 group <- "Bureau.Name"
 USDA <- TRUE
 top <- 10
 title <- paste("Top", top, ifelse(group == "Bureau.Name", "US", "USDA"))
 
 gg_budget <- function(group, USDA, top, title) {
-  ba2 = {ba ->.;
+  budauth2 = {budauth ->.;
     within(., {group = .[, group]}) ->.;
     if (USDA == TRUE) {
       subset(., Agency.Name == "Department of Agriculture") ->.;
@@ -101,12 +135,12 @@ gg_budget <- function(group, USDA, top, title) {
     }
   
   top51 = {
-    subset(ba2, variable == "2017") -> .;
+    subset(budauth2, variable == "2018") -> .;
     .[order(- .$value), ] ->.;
     head(., top) ->.;
     }
   
-  gg <- filter(ba2, group %in% top51$group) %>%
+  gg <- filter(budauth2, group %in% top51$group) %>%
     ggplot(aes(x = as.numeric(variable), y = value, col = group)) + 
     geom_line(lwd = 2) + 
     ylab("Dollars") + xlab("Year") +
@@ -120,33 +154,95 @@ gg_budget <- function(group, USDA, top, title) {
 gg_us   <- gg_budget(group = "Agency.Name", USDA  = FALSE, top = 10, title = "Top 10 US Agencies")
 gg_usda <- gg_budget(group = "Bureau.Name", USDA  = TRUE,  top = 5,  title = "Top 5 USDA Agencies")
 gridExtra::grid.arrange(gg_us, gg_usda, ncol = 1)
+```
+
+# Breakdown of Budget Authorization
+
+```{r}
+
+# total budget
+formatC(sum(budauth$`2018`[budauth$`2018` > 0]), format = "fg", big.mark = ",")
+
+# n_agency
+length(unique(budauth$Agency.Name))
+
+# n_bureau
+length(unique(budauth$Bureau.Name))
+
+agencies <- group_by(budauth, Agency.Name) %>%
+  summarize(n_bureau = length(unique(Bureau.Name)),
+            n_account = length(unique(Account.Code)),
+            dol_fy18 = sum(`2018`[`2018` > 0])
+            ) %>%
+  arrange(- dol_fy18)
+
+View(agencies)
+
+arrange(agencies, - n_bureau)
+arrange(agencies, - n_account)
+arrange(agencies, - dol_fy18)
+
+#n_agency
+length(unique(agencies$Agency.Name[agencies$n_bureau > 1]))
+
+```
 
 
-ba2 <- {ba ->.;
-  within(., {group = Bureau.Name}) ->.;
-  subset(., Agency.Name == "Department of Agriculture") ->.;
-  vars <- as.character(1976:2020)
-  .[c("group", vars)] ->.;
-  reshape(., direction = "long",
-          timevar = "variable", times   = vars, 
-          v.names = "value",    varying = vars
-  ) ->.;
-  within(., {value = value * 1000}) ->.;
-  subset(., value > 0) ->.;
-  aggregate(value ~ group + variable, data = ., sum, na.rm = TRUE) ->.;
-}
+# Top 10 US Agencies
 
-top51 <- {
-  subset(ba2, variable == "2017" & group != "Food and Nutrition Service") -> .;
-  .[order(- .$value), ] ->.;
-  head(., 5) ->.;
-}
+```{r}
 
-subset(ba2, group %in% top51$group) ->.;
-xyplot(data = ., x = value ~ as.numeric(variable), groups = group,
-       type = c("l", "g"), lwd = 2,
-       ylab = "Dollars", xlab = "Year",
-       main = "USDA Budget",
-       auto.key = list(space = "right")
-       )
+
+bud <- select(budauth, Agency.Name, as.character(1976:2023)) %>%
+  gather(key = year, value = dollars, - Agency.Name) %>%
+  group_by(Agency.Name, year) %>%
+  summarize(dollars = sum(dollars)) %>%
+  mutate(year = as.integer(year))
+
+top10 <- filter(bud, year == 2018) %>%
+  arrange(- dollars) %>%
+  head()
+
+filter(bud, Agency.Name %in% top10$Agency.Name) %>%
+  ggplot(aes(x = year, y = dollars, col = Agency.Name)) +
+  geom_line(aes(lty = (year <= 2018)), lwd = 2) +
+  geom_vline(xintercept = 2018) +
+  scale_linetype_manual(values = c("dotted", "solid")) +
+  scale_x_continuous(breaks = seq(1880, 2030, 8)) +
+  theme(aspect.ratio = 1) +
+  ggtitle("Top 10 US Agencies")
+
+
+```
+
+
+# Mandatory vs Discretionary Spending
+
+```{r}
+
+sp <- select(budauth, BEA.Category, as.character(1976:2023)) %>%
+  gather(key = year, value = dollars, - BEA.Category) %>%
+  group_by(BEA.Category, year) %>%
+  summarize(dollars = sum(dollars)) %>%
+  mutate(year = as.integer(year))
+
+ggplot(sp, aes(x = year, y = dollars, col = BEA.Category)) +
+  geom_line(aes(lty = (year <= 2018)), lwd = 2) +
+  scale_x_continuous(breaks = seq(1880, 2030, 8)) +
+  theme(aspect.ratio = 1) +
+  geom_vline(xintercept = 2018) +
+  scale_linetype_manual(values = c("dotted", "solid")) +
+  scale_x_continuous(breaks = seq(1880, 2030, 8)) +
+  theme(aspect.ratio = 1) +
+  ggtitle("Spending Category")
+
+# percentage
+group_by(budauth, BEA.Category, Agency.Name) %>%
+  summarize(dollars = sum(`2018`)) %>%
+  mutate(dollars = ifelse(is.na(dollars), 0, dollars)) %>%
+  spread(BEA.Category, dollars) %>%
+  mutate(pct_man = Mandatory / (Mandatory + Discretionary)) %>%
+  arrange(- Mandatory) %>%
+  head(20)
+
 ```
