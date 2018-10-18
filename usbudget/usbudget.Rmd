@@ -346,6 +346,7 @@ group_by(budauth, BEA.Category, Agency.Name) %>%
 
 Examples
 
+ - [maa.org](https://www.maa.org/press/periodicals/loci/joma/the-consumer-price-index-and-inflation-adjust-numbers-for-inflation)
  - [stackoverflow](https://stackoverflow.com/questions/12590180/inflation-adjusted-prices-package)
  - [blscraper](https://www.datascienceriot.com//r/inflation-blscraper/)
  
