@@ -1,0 +1,721 @@
+---
+title: "Looking Back: The History of Soil Survey Thru Metrics"
+author: "Stephen Roecker, Pam Thomas, Dylan Beaudette, Skye Wills"
+date: "`r Sys.Date()`"
+output:
+  slidy_presentation:
+    css: css/hpstr.css
+    fig_caption: yes
+    fig_height: 3
+    fig_width: 3
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, cache = TRUE)
+
+# load packages
+suppressWarnings( {
+  library(soilDB)
+  library(lattice)
+  library(ggplot2)
+  library(dplyr)
+  library(Cairo)
+  })
+
+png_dplots <- function(file, width, height) Cairo(file, type = "png", width = width, height = height, units = "in", res=200, pointsize = 15)
+
+ownCloud <- "C:/Users/Stephen.Roecker/ownCloud/projects/2018_ncss/"
+
+dates <- read.csv(paste0(ownCloud, "dates.csv"), stringsAsFactors = FALSE)
+
+```
+
+
+## Abstract
+
+Our history is typically viewed thru the lens of the personalities involved. However, an alternative way to view history is thru metrics that quantify some facet of our activities over time. The most common soil survey metric is acres, however many others exist, such as staffing, budget, projects, soil series, pedons and downloads. Many of these metrics are captured annually in NASIS. The story they tell can be equally as interesting as the people involved. Viewed overtime they show the ups and downs of Soil Survey, and while the trends tell us where we've been, it is often the inflection points that mark historic events. Examining records dating back to 1900 shows that Soil Survey has experienced numerous inflection points.
+
+
+---
+
+
+## Manuscripts
+
+- The number of manuscripts published per year has fluctuated substantially, most likely due to large external factors such: WWII, and a succession of several Farm Bills and Recessions.
+- The most recent reduction is to be expected as the US nears the completion of initial soil mapping (2026?), but the reduction this been accelerated by a large decrease in the number of FTEs.
+
+
+
+```{r manuscripts, fig.dim = c(12, 8), fig.ext = "png", dev = "png_dplots"}
+
+data("us_ss_timeline")
+
+test <- as.data.frame(table(us_ss_timeline$year), stringsAsFactors = FALSE)
+names(test)[names(test) %in% c("Var1", "Freq")] <- c("year", "Count")
+test <- mutate(test, 
+               year = as.numeric(year)
+               )
+
+md <- filter(dates, manuscript_flag == 1) %>%
+  left_join(test, by = "year") %>%
+  mutate(Count = ifelse(is.na(Count), 0, Count),
+         dup = duplicated(year), 
+         dif = apply(rbind(lag(year, 1) - year, 
+                           lag(year, 2) - year, 
+                           lag(year, 3) - year), 2, 
+                    mean, 
+                    na.rm = TRUE
+                    ),
+         dif = ifelse(dif < -15 | is.na(dif), -2, dif),
+         dif = dif - max(dif),
+         height1 = max(test$Count) * 1 - (dif + dup) * 2,
+         height2 = max(cumsum(test$Count)) * 1 - (dif + dup) * 100
+         # height2 = seq(max(cumsum(test$Count)) * 1.3, length.out = length(year), by = -100),
+         )
+
+g1 <- ggplot(test, aes(x = year, y = Count)) +
+  geom_area(alpha = 0.7) + 
+  geom_segment(data = md, aes(x = year, xend = year, y = height1, yend = 0), lty = "dotted") +
+  geom_text(data = md, aes(x = year, y = height1, label = event), cex = 3, angle = 25, hjust = 0, vjust = 0) +
+  ylim(0, max(test$Count, na.rm = TRUE) * 1.5) +
+  scale_x_continuous(breaks = seq(1880, 2030, 8)) +
+  # theme(aspect.ratio = 1) + 
+  xlab("Year") +
+  ggtitle("Number of Published US Soil Survey Manuscripts by Year")
+
+g2  <- ggplot(test, aes(x = year, y = cumsum(Count))) +
+  geom_area(alpha = 0.7) + 
+  geom_segment(data = md, aes(x = year, xend = year, y = height2, yend = 0), lty = "dotted") +
+  geom_text(data = md, aes(x = year, y = height2, label = event), cex = 3, angle = 25, hjust = 0, vjust = 0) +
+  ylim(0, max(cumsum(test$Count), na.rm = TRUE) * 1.5) +
+  scale_x_continuous(breaks = seq(1880, 2030, 8)) +
+  # theme(aspect.ratio = 1) +
+  xlab("Year") + ylab("Count") +
+  ggtitle("Cumulative Number of Published US Soil Survey Manuscripts by Year")
+
+gridExtra::grid.arrange(g1, g2, ncol = 1)
+
+```
+
+
+---
+
+
+## Soil Series and Benchmark Numbers
+
+- The number of soil series spiked after 1968, probably do to a confluence of factors, but most likely was a response to the 1966 "Soil Survey for Resource Planning and Development Act" which solidified the then SCS legislative authority for conducting soil surveys.
+- The total number of benchmark soil series has remained largely stagnant since 1970.
+- Since 2012 their has been a precipitous drop in the number of new soil series, which corresponds with a similar drop in initial soil mapping and staffing.
+
+
+```{r soilseries and benchmark numbers, fig.dim = c(15, 8), fig.ext = "png", dev = "png_dplots"}
+
+get_soilseries_from_NASIS <- function(stringsAsFactors = default.stringsAsFactors()) {
+  # must have RODBC installed
+  if (!requireNamespace('RODBC')) stop('please install the `RODBC` package', call.=FALSE)
+  
+  q.soilseries <- "
+  SELECT soilseriesname, soiltaxclasslastupdated, mlraoffice, areasymbol, areatypename, soilseriesstatus, taxclname, taxorder, taxsuborder, taxgrtgroup, taxsubgrp, taxpartsize, taxpartsizemod, taxceactcl, taxreaction, taxtempcl, originyear, establishedyear, benchmarksoilflag, statsgoflag, soilseriesiid
+
+  FROM 
+      soilseries ss 
+  INNER JOIN
+      area       a  ON a.areaiid      = ss.typelocstareaiidref
+  INNER JOIN
+      areatype   at ON at.areatypeiid = ss.typelocstareatypeiidref
+  ;"
+  
+  # setup connection local NASIS
+  channel <- RODBC::odbcDriverConnect(connection=getOption('soilDB.NASIS.credentials'))
+  
+  # exec query
+  d.soilseries <- RODBC::sqlQuery(channel, q.soilseries, stringsAsFactors = FALSE)
+  
+  # close connection
+  RODBC::odbcClose(channel)
+  
+  # recode metadata domains
+  d.soilseries <- uncode(d.soilseries, stringsAsFactors = stringsAsFactors)
+  
+  # done
+  return(d.soilseries)
+}
+
+# ss <- get_soilseries_from_NASIS()
+
+fname <- paste0(ownCloud, "ss_2018-06-25.csv")
+# write.csv(ss, file = fname, row.names = FALSE)
+ss <- read.csv(file = fname, stringsAsFactors = FALSE)
+
+ss$establishedyear <- ifelse(ss$establishedyear < 1883, NA, ss$establishedyear)
+
+# table(ss$soilseriesstatus)
+# table(ss$benchmarksoilflag)
+
+
+# tabulate all soil series
+ss_t <- as.data.frame(table(ss$establishedyear), stringsAsFactors = FALSE)
+names(ss_t)[names(ss_t) %in% c("Var1", "Freq")] <- c("year", "Count") 
+ss_t <- mutate(ss_t, 
+               year = as.numeric(year),
+               benchmark = FALSE
+               )
+
+
+# tabulate benchmark soils
+ss_b <- subset(ss, benchmarksoilflag == 1)
+ss_b_t <- as.data.frame(table(ss_b$establishedyear), stringsAsFactors = FALSE)
+names(ss_b_t)[names(ss_b_t) %in% c("Var1", "Freq")] <- c("year", "Count") 
+ss_b_t <- mutate(ss_b_t,
+                 year = as.numeric(year),
+                 benchmark = TRUE
+                 )
+
+# dates2 <- subset(dates, manuscript_flag == 1)
+# dates2 <- transform(dates2,
+#                     height1 = sort(rnorm(length(year), 950, 50), decreasing = TRUE),
+#                     height2 = sort(rnorm(length(year), 26000, 1400), decreasing = TRUE),
+#                     idx    = 1:length(year)
+#                     )
+
+md <- filter(dates, manuscript_flag == 1) %>%
+  left_join(ss_t, by = "year") %>%
+  mutate(Count = ifelse(is.na(Count), 0, Count),
+         dup = duplicated(year), 
+         dif = apply(rbind(lag(year, 1) - year, 
+                           lag(year, 2) - year, 
+                           lag(year, 3) - year), 2, 
+                    mean, 
+                    na.rm = TRUE
+                    ),
+         dif = ifelse(dif < -15 | is.na(dif), -2, dif),
+         dif = dif - max(dif),
+         height1 = max(ss_t$Count) * 1 - (dif + dup) * 10,
+         height2 = max(cumsum(ss_t$Count)) * 1 - (dif + dup) * 300
+         )
+
+g1 <- ggplot(ss_t, aes(x = year, y = Count)) +
+  geom_area(aes(fill = benchmark)) +
+  geom_area(data = ss_b_t, aes(x = year, y = Count, fill = benchmark)) +
+  geom_segment(data = md, aes(x = year, xend = year, y = height1, yend = 0), lty = "dotted") +
+  geom_text(data = md, aes(x = year, y = height1, label = event), cex = 3, angle = 25, hjust = 0, vjust = 0) +
+  ylim(0, max(ss_t$Count, na.rm = TRUE) * 1.3) +
+  scale_x_continuous(breaks = seq(1880, 2030, 8)) +
+  # theme(aspect.ratio = 1) + 
+  xlab("Year") + 
+  ggtitle("Number of Soil Series Established per Year")
+
+g2 <- ggplot(ss_t, aes(x = year, y = cumsum(Count))) +
+  geom_area(aes(fill = benchmark)) +
+  geom_area(data = ss_b_t, aes(x = year, y = cumsum(Count), fill = benchmark)) +
+  geom_segment(data = md, aes(x = year, xend = year, y = height2, yend = 0), lty = "dotted") +
+  geom_text(data = md, aes(x = year, y = height2, label = event), cex = 3, angle = 25, hjust = 0, vjust = 0) +
+  ylim(0, max(cumsum(ss_t$Count), na.rm = TRUE) * 1.3) +
+  scale_x_continuous(breaks = seq(1880, 2030, 8)) +
+  # theme(aspect.ratio = 1) +
+  ylab("Count") + xlab("Year") +
+  ggtitle("Cumulative Number of Soil Series Established per Year")
+
+gridExtra::grid.arrange(g1, g2, ncol = 1)
+
+```
+
+
+---
+
+
+## Pedons
+
+- Compared to other metrics, the quantity of pedon data has been slower to accumulate, since their was no place to store it digitally prior to NASIS 1.0. 
+- The most obvious historic events effecting the quantity of pedon included: NASIS 1.0, PedonPC 1.0, and RaCA, and SDJR.
+- Somewhat concerning is the drop in new pedons post SDJR, which is probably related to several factors, but most likely do to the drop in the total number of field soil scientist. 
+
+
+```{r pedons, fig.dim = c(8, 9), fig.ext = "png", dev = "png_dplots"}
+
+# count pedons by year
+# EXEC SQL
+# SELECT
+# CASE WHEN peiid > 0 THEN 1 ELSE 0 END n_peiid,
+# CASE WHEN upedonid IS NOT NULL THEN 1 ELSE 0 END n_upedonid,
+# FIRST_VALUE(YEAR(so.obsdate)) OVER(PARTITION BY peiid ORDER BY so.obsdate) obs_year
+# 
+# FROM
+# site    s                                     INNER JOIN
+# siteobs so ON so.siteiidref   = s.siteiid     INNER JOIN
+# pedon   p  ON p.siteobsiidref = so.siteobsiid
+# 
+# GROUP BY so.obsdate, peiid, upedonid
+# ;
+# SORT BY obs_year
+# AGGREGATE ROWS BY obs_year COLUMN n_peiid SUM, n_upedonid SUM
+# .
+
+# count lab pedons by year
+# EXEC SQL
+# SELECT
+# CASE WHEN peiid > 0 THEN 1 ELSE 0 END n_peiid,
+# CASE WHEN upedonid IS NOT NULL THEN 1 ELSE 0 END n_upedonid,
+# FIRST_VALUE(YEAR(so.obsdate)) OVER(PARTITION BY peiid ORDER BY so.obsdate) obs_year
+# 
+# FROM
+# site    s                                     INNER JOIN
+# siteobs so ON so.siteiidref   = s.siteiid     INNER JOIN
+# pedon   p  ON p.siteobsiidref = so.siteobsiid
+# 
+# WHERE pedlabsampnum IS NOT NULL
+# 
+# GROUP BY so.obsdate, peiid, upedonid
+# ;
+# SORT BY obs_year
+# AGGREGATE ROWS BY obs_year COLUMN n_peiid SUM, n_upedonid SUM
+# .
+
+pedons <- read.csv(paste0(ownCloud, "pedons.csv"), stringsAsFactors = FALSE)
+pedons <- filter(pedons, obs_year %in% 1950:2018) %>%
+  mutate(year = obs_year,
+         lab = FALSE,
+         Count = n_peiid
+         )
+
+labpedons <- read.csv(paste0(ownCloud, "labpedons.csv"), stringsAsFactors = FALSE)
+labpedons <- filter(labpedons, obs_year %in% 1950:2018) %>%
+  mutate(year = obs_year,
+         lab = TRUE,
+         Count = n_peiid
+         )
+
+md <- filter(dates, manuscript_flag == 1) %>%
+  left_join(pedons, by = "year") %>%
+  mutate(Count = ifelse(is.na(Count), 0, Count),
+         dup = duplicated(year), 
+         dif = apply(rbind(lag(year, 1) - year, 
+                           lag(year, 2) - year, 
+                           lag(year, 3) - year), 2, 
+                    mean, 
+                    na.rm = TRUE
+                    ),
+         dif = ifelse(dif < -15 | is.na(dif), -2, dif),
+         dif = dif - max(dif),
+         height1 = max(pedons$Count) * 0.9 - (dif + dup) * 1000,
+         height2 = max(cumsum(pedons$Count)) * 0.9 - (dif + dup) * 10000
+         ) %>%
+  filter(year > 1950)
+
+g1 <- ggplot(pedons, aes(x = year, y = Count)) + 
+  geom_area(aes(fill = lab), stat = "identity") + 
+  geom_area(data = labpedons, aes(x = year, y = Count, fill = lab), stat = "identity") +
+  geom_segment(data = md, aes(x = year, xend = year, y = height1, yend = 0), lty = "dotted") +
+  geom_text(data = md, aes(x = year, y = height1, label = event), cex = 3, angle = 25, hjust = 0, vjust = 0) +
+  ylim(0, max(pedons$Count, na.rm = TRUE) * 1.2) +
+  ylab("Count") + xlab("Observation Year") +
+  scale_x_continuous(breaks = seq(1880, 2030, 8)) +
+  ggtitle("Number of Pedons per Year") 
+
+g2 <- ggplot(pedons, aes(x = year, y = cumsum(Count))) + 
+  geom_area(aes(fill = lab), stat = "identity") +
+  geom_area(data = labpedons, aes(x = year, y = cumsum(Count), fill = lab), stat = "identity") +
+  geom_segment(data = md, aes(x = year, xend = year, y = height2, yend = 0), lty = "dotted") +
+  geom_text(data = md, aes(x = year, y = height2, label = event), cex = 3, angle = 25, hjust = 0, vjust = 0) +
+  ylim(0, max(cumsum(pedons$Count), na.rm = TRUE) * 1.2) +
+  ylab("Count") + xlab("Observation Year") +
+  scale_x_continuous(breaks = seq(1880, 2030, 8)) +
+  ggtitle("Cumulative Number of Pedons per Year")
+
+gridExtra::grid.arrange(g1, g2, ncol = 1, bottom = "The oldest pedon record dates back to 1755. However, the early numbers are so \n small they aren't visible on the graph. Therefore the x-axis has been truncated.")
+
+```
+
+
+---
+
+
+## Projects - Time Series
+
+- Prior to 2010 "INITIAL" soil survey was the primarily activity of the SSD.
+- From 2010 to 2017 updates (i.e. "EVAL") to the tabular data in NASIS dominated the SSD activity.
+- Post 2018 "MLRA" field projects are projected to become the dominant SSD activity.
+- Spatially the number of acres reported has similarly fluctuated, with hotspots located where initial soil mapping is still taking place.
+
+
+```{r projects, fig.dim = c(10, 6), fig.ext = "png", dev = "png_dplots"}
+
+# progress
+# p <- expand.grid(mlrassoarea      = paste0(1:18, "-%"),
+#                  fy               = 1993:2028,
+#                  projecttypename  = "%25",
+#                  stringsAsFactors = FALSE
+#                  )
+# prg <- {
+#   split(p, list(p$mlrassoarea, p$fy, p$projecttypename), drop = TRUE) ->.;
+#   lapply(., function(x) {
+#     cat("procressing", paste(x$mlrassoarea, x$fy, x$projecttypename), "\n")
+#     get_progress_from_NASISWebReport(x$mlrassoarea, x$fy, x$projecttypename)
+#     }) ->.;
+#   do.call("rbind", .)
+#   }
+
+fname <- paste0(ownCloud, "nasis_goal_2018-06-07_us_1993_2017.csv")
+# write.csv(prg, file = fname, row.names = FALSE)
+prg <- read.csv(file = fname, stringsAsFactors = FALSE)
+
+
+# project
+
+# p <- expand.grid(mlrassoarea      = paste0(1:18, "-%"),
+#                  fy               = 1993:2017,
+#                  stringsAsFactors = FALSE
+#                  )
+# prj <- {
+#   split(p, list(p$mlrassoarea, p$fy), drop = TRUE) ->.;
+#   lapply(., function(x) {
+#     cat("procressing", paste(x$mlrassoarea, x$fy), "\n")
+#     get_project_from_NASISWebReport(x$mlrassoarea, x$fy)
+#     }) ->.;
+#   do.call("rbind", .)
+#   }
+
+fname <- paste0(ownCloud, "nasis_project_2018-02-14_us_2012_2028.csv")
+# write.csv(prj, file = fname, row.names = FALSE)
+prj <- read.csv(file = fname, stringsAsFactors = FALSE)
+
+
+# plot ssd
+
+ssd <- filter(prg, projecttypename %in% c("SDJR (Obsolete)", "MLRA", "INITIAL", "EVAL", "TRADITIONAL (Obsolete)", "NULL")
+              ) %>%
+  mutate(projecttypename = ifelse(projecttypename == "TRADITIONAL (Obsolete)", "INITIAL", projecttypename),
+         projecttypename = ifelse(projecttypename == "SDJR (Obsolete)", "EVAL", projecttypename)
+         ) %>%
+  # mutate(region = sapply(mlrassoarea, function(x) strsplit(x, "-")[[1]][1])) %>%
+  group_by(projecttypename, fiscalyear) %>%
+  summarize(acre_progress = sum(acre_progress, na.rm = TRUE),
+            acre_goal     = sum(acre_goal, na.rm = TRUE)) %>%
+  mutate(acre_progress = ifelse(fiscalyear > 2017, acre_goal, acre_progress),
+         Timeframe = ifelse(fiscalyear > 2017, "Future", "Past"),
+         year = fiscalyear #,
+         # reported      = factor(reported, 1:2, labels = c("FALSE", "TRUE"))
+         )
+
+# nd <- filter(dates, nasis_flag == 1 & year %in% 1993:2018) %>%
+#   mutate(height1 = sort(rnorm(length(year), 6e7, 1e6), decreasing = TRUE)
+#          )
+
+nd <- filter(dates, nasis_flag == 1 & year %in% 1993:2018) %>%
+  mutate(dup = duplicated(year), 
+         dif = apply(rbind(lag(year, 1) - year, 
+                           lag(year, 2) - year, 
+                           lag(year, 3) - year), 2, 
+                    mean, 
+                    na.rm = TRUE
+                    ),
+         dif = ifelse(dif < -15 | is.na(dif), -2, dif),
+         dif = dif - max(dif),
+         height1 = max(ssd$acre_progress) * 0.6 - (dif + dup) * 1000000,
+         height2 = max(cumsum(ssd$acre_progress)) * 0.9 - (dif + dup) * 10000
+         )
+
+ggplot(ssd, aes(x = fiscalyear, y = acre_progress)) +   
+  # geom_area(aes(fill = projecttypename), stat = "identity") +
+  geom_line(aes(col = projecttypename, lty = Timeframe), lwd = 1) +
+  geom_point(aes(col = projecttypename), cex = 2)+
+  geom_segment(data = nd, aes(x = year, xend = year, y = height1, yend = 0), lty = "dotted") +
+  geom_text(data = nd, aes(x = year, y = height1, label = event), cex = 3, angle = 25, hjust = 0, vjust = 0) +
+  ylim(0, max(ssd$acre_progress, na.rm = TRUE) * 1) +
+  scale_linetype_manual(values = c("dotted", "solid")) +
+  # scale_shape_manual(values = c(16, 16)) +
+  # facet_grid(~ projecregion, scales = "free_y", ncol = 1, strip.position = "right") +
+  scale_x_continuous(breaks = seq(1992, 2030, 4)) +
+  ggtitle("SSD Acre Progress and Long Range Plan from NASIS") + ylab("Acres") + xlab("Fiscal Year")
+
+
+# plot regions
+  
+# regions <- filter(prg, projecttypename %in% c("SDJR (Obsolete)", "MLRA", "INITIAL", "EVAL", "TRADITIONAL (Obsolete)")
+#               ) %>%
+#   mutate(projecttypename = ifelse(projecttypename == "TRADITIONAL (Obsolete)", "INITIAL", projecttypename),
+#          projecttypename = ifelse(projecttypename == "SDJR (Obsolete)", "EVAL", projecttypename),
+#          region = sapply(mlrassoarea, function(x) strsplit(x, "-")[[1]][1])
+#          ) %>%
+#   # mutate(region = sapply(mlrassoarea, function(x) strsplit(x, "-")[[1]][1])) %>%
+#   group_by(region, projecttypename, fiscalyear) %>%
+#   summarize(acre_progress = sum(acre_progress, na.rm = TRUE))
+#   
+# filter(regions, fiscalyear %in% 2013:2017) %>%
+#   ggplot(aes(x = fiscalyear, y = acre_progress, color = projecttypename)) +   
+#   geom_line(lwd = 1) +
+#   geom_point(cex = 2) +
+#   #facet_grid(~ projecregion, scales = "free_y", ncol = 1, strip.position = "right") +
+#   #scale_x_continuous(breaks = seq(2012, 2017, 2)) +
+#   facet_grid(region ~.) +
+#   ggtitle("Region Acre Progress") + ylab("Acres") + xlab("Fiscal Year")
+
+```
+
+
+---
+
+
+## Projects - Time Series Map
+
+![](C:/Users/Stephen.Roecker/ownCloud/code/acres_gg2_crop.png)
+
+
+---
+
+
+## Project Staff - Count
+
+- The number of full-time employees (FTEs) provided by the SSD budget appropriations has fallen substantially since 2006.
+- Staffing numbers mined from NASIS provide an incomplete record the SSD activities, prior to 2014. However the trends in the staffing numbers mirror those in depicted in acres.
+- The trends in TSS how a the overwhelming major of SSD staff are engaged in some form of TSS. Relative to the State staff (e.g. SSS and RSS) the SSD has slightly more staff.
+
+```{r tss staff, fig.dim = c(8, 6), fig.ext = "png", dev = "png_dplots"}
+# historical appropriations
+ha <- data.frame(
+  fiscalyear = c(1995, 2000, 2005, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019),
+  appropriations = c(72.6, 78.3, 86.5, 93.9, 93.9, 80, 74, 80, 80, 80, 80, 79.7, 76),
+  FTE = c(925, 920, 936, 733, 675, 605, 550, 424, 484, 468, 423, 403, 387),
+  source          = "SSD Appropriations",
+  projecttypename = NA,
+  branch          = "SSD",
+  stringsAsFactors = FALSE
+  )
+ha$n_staff <- ha$FTE
+
+
+p <- expand.grid(nasissitename    = paste0("MLRA", 
+                                           c("01", "02", "03", "04", "05", "06", "07", "08", "09", 10:18), "%"),
+                 state            = "%",
+                 fy               = 1993:2017,
+                 stringsAsFactors = FALSE
+                 )
+
+# tstaff <- {
+#   split(p, list(p$nasissitename, p$state, p$fy), drop = TRUE) ->.;
+#   lapply(., function(x) {
+#     cat("procressing", paste(x$nasissitename, x$fy), "\n")
+#     parseWebReport(url = "https://nasis.sc.egov.usda.gov/NasisReportsWebSite/limsreport.aspx?report_name=get_tss_staff_from_NASISWebReport",
+#                    args = list(p_nasissitename = x$nasissitename, 
+#                                p_state         = x$state, 
+#                                p_fy            = x$fy
+#                                )
+#                    )
+#     }) ->.;
+#   do.call("rbind", .)
+#   }
+
+fname <- paste0(ownCloud, "nasis_tssstaff_2018-06-07_us_2012_2028.csv")
+# write.csv(tstaff, file = fname, row.names = FALSE)
+tstaff <- read.csv(file = fname, stringsAsFactors = FALSE)
+
+ts <- mutate(tstaff,
+             username = ifelse(is.na(username), state, username),
+             branch   = ifelse(is.na(mlraoffice), "State", "SSD"),
+             projecttypename = "TSS",
+             source   = "NASIS"
+             )
+
+ts1 <-  group_by(ts, fiscalyear, branch, source, projecttypename) %>%
+  # filter(acre_goal > 0) %>%
+  summarize(n_staff = length(unique(username))
+            ) %>%
+  as.data.frame()
+
+vars <- c("fiscalyear", "n_staff", "source", "branch", "projecttypename")
+ts2 <- rbind(ts1[vars], ha[vars]) 
+
+# nd <- subset(dates, nasis_flag == 1)
+# nd <- transform(nd,
+#                     height1 = sort(rnorm(length(year), 300, 10), decreasing = TRUE)
+#                     )
+
+nd <- filter(dates, nasis_flag == 1 & year %in% 1993:2018) %>%
+  mutate(dup = duplicated(year), 
+         dif = apply(rbind(lag(year, 1) - year, 
+                           lag(year, 2) - year, 
+                           lag(year, 3) - year), 2, 
+                    mean, 
+                    na.rm = TRUE
+                    ),
+         dif = ifelse(dif < -15 | is.na(dif), -2, dif),
+         dif = dif - max(dif),
+         height1 = max(ts2$n_staff) * 1 - (dif + dup) * 10,
+         height2 = max(cumsum(ts2$n_staff)) * 0.9 - (dif + dup) * 10000
+         )
+
+# number of tss staff
+# ggplot(ts2, aes(x = fiscalyear, y = n_staff)) +
+#   geom_point(aes(col = branch), size = 2) + 
+#   geom_line(aes(col = branch, lty = source), lwd = 1) +
+#   geom_segment(data = nd, aes(x = year, xend = year, y = height1, yend = 0), lty = "dotted") +
+#   geom_text(data = nd, aes(x = year, y = height1, label = event), cex = 3, angle = 25, hjust = 0, vjust = 0) +
+#   ylim(0, max(ts2$n_staff, na.rm = TRUE) * 1.2) + xlim(1992, 2020) +
+#   xlab("Fiscal Year") + ylab("Count") +
+#   scale_x_continuous(breaks = seq(1992, 2030, 4)) +
+#   scale_linetype_manual(values = c("dotted", "solid")) +
+#   ggtitle("Number of TSS Staff with Recorded Instances in NASIS vs Budget Appropriations")
+
+```
+
+
+```{r project staff, fig.dim = c(8, 6), fig.ext = "png", dev = "png_dplots"}
+
+# p <- expand.grid(mlrassoarea      = paste0(1:18, "-%"),
+#                  fy               = 1993:2017,
+#                  stringsAsFactors = FALSE
+#                  )
+# pstaff <- {
+#   split(p, list(p$mlrassoarea, p$fy), drop = TRUE) ->.;
+#   lapply(., function(x) {
+#     cat("procressing", paste(x$mlrassoarea, x$fy), "\n")
+#     parseWebReport(url = "https://nasis.sc.egov.usda.gov/NasisReportsWebSite/limsreport.aspx?report_name=get_projectstaff_from_NASISWebReport",
+#                    args = list(p_mlrassoarea = x$mlrassoarea, p_fy = x$fy)
+#                    )
+#     }) ->.;
+#   do.call("rbind", .)
+# }
+
+fname <- paste0(ownCloud, "nasis_projectstaff_2018-06-25_us_1993_2018", ".csv")
+# write.csv(pstaff, file = fname, row.names = FALSE)
+pstaff <- read.csv(file = fname, stringsAsFactors = FALSE)
+
+ps <- mutate(pstaff,
+             branch          = "SSD",
+             username        = ifelse(is.na(username), mlrassoarea, username),
+             projecttypename = as.character(projecttypename),
+             projecttypename = ifelse(projecttypename == "TRADITIONAL (Obsolete)", "INITIAL", projecttypename),
+             projecttypename = ifelse(projecttypename == "SDJR (Obsolete)", "EVAL", projecttypename)
+             )
+
+
+ps1 <-  group_by(ps, fiscalyear, projecttypename, branch) %>%
+  # filter(acre_goal > 0) %>%
+  summarize(n_staff = length(unique(username)),
+            source = "NASIS",
+            min_acre_goal = min(acre_goal, na.rm = TRUE),
+            avg_acre_goal = mean(acre_goal, na.rm = TRUE),
+            med_acre_goal = median(acre_goal, na.rm = TRUE),
+            max_acre_goal = max(acre_goal, na.rm = TRUE)
+            ) %>%
+  as.data.frame()
+
+ps2 <- group_by(ps, fiscalyear, branch) %>%
+  # filter(acre_goal > 0) %>%
+  summarize(n_staff = length(unique(username))) %>%
+  mutate(projecttypename = "ALL PROJECTS",
+         source = "NASIS",
+         min_acre_goal = NA,
+         avg_acre_goal = NA,
+         med_acre_goal = NA,
+         max_acre_goal = NA
+         ) %>%
+  as.data.frame()
+
+ps3 <- rbind(ps1, ps2)
+
+
+# number of staff per projecttypename
+# nd <- subset(dates, nasis_flag == 1)
+# nd <- transform(nd,
+#                     height1 = sort(rnorm(length(year), 375, 15), decreasing = TRUE)
+#                     )
+
+vars <- c("fiscalyear", "n_staff", "projecttypename", "source", "branch")
+ps4 <- rbind(ps3[vars], ha[vars]) 
+
+nd <- filter(dates, nasis_flag == 1 & year %in% 1993:2018) %>%
+  mutate(dup = duplicated(year), 
+         dif = apply(rbind(lag(year, 1) - year, 
+                           lag(year, 2) - year, 
+                           lag(year, 3) - year), 2, 
+                    mean, 
+                    na.rm = TRUE
+                    ),
+         dif = ifelse(dif < -15 | is.na(dif), -2, dif),
+         dif = dif - max(dif),
+         height1 = max(ps4$n_staff) * 1 - (dif + dup) * 10,
+         height2 = max(cumsum(ps4$n_staff)) * 0.9 - (dif + dup) * 10000
+         )
+
+filter(ps4, projecttypename %in% c("MLRA", "INITIAL", "EVAL", "ALL PROJECTS", "NULL")) %>%
+  mutate(activity = projecttypename) %>%
+ggplot(aes(x = fiscalyear, y = n_staff)) +
+  # projects
+  geom_point(aes(col = activity, shape = branch), size = 2) + 
+  geom_line(aes(col = activity, lty = source), lwd = 1) +
+  # Tss SSD
+  geom_point(data = filter(ts2, branch == "SSD"), aes(col = projecttypename, shape = branch), size = 2) +
+  geom_line(data = filter(ts2, branch == "SSD"), aes(col = projecttypename, lty = source), lwd = 1) +
+  # Tss State
+  geom_point(data = filter(ts2, branch == "State"), aes(col = projecttypename, shape = branch), size = 2) +
+  geom_line(data = filter(ts2, branch == "State"), aes(col = projecttypename, lty = source), lwd = 1) +
+  # appropriation
+  # geom_line(data = ha, aes(lty = source)) +
+  geom_segment(data = nd, aes(x = year, xend = year, y = height1, yend = 0), lty = "dotted") +
+  geom_text(data = nd, aes(x = year, y = height1, label = event), cex = 3, angle = 25, hjust = 0, vjust = 0) +
+  ylim(0, max(ps4$n_staff, na.rm = TRUE) * 1.2) + xlim(1992, 2020) +
+  xlab("Fiscal Year") + ylab("Count") +
+  scale_linetype_manual(values = c("dotted", "solid")) +
+  scale_x_continuous(breaks = seq(1992, 2030, 4)) +
+  ggtitle("Number of Soil Survey Staff with Goals in NASIS vs Budget Appropriations")
+
+```
+
+
+---
+
+
+# Project Staff - Acre Goals
+
+```{r, fig.dim = c(10, 6), fig.ext = "png", dev = "png_dplots"}
+# average acre goal per employee
+
+filter(ps1, projecttypename %in% c("MLRA", "INITIAL", "EVAL", "ALL PROJECTS", "NULL")) %>%
+ggplot(aes(x = fiscalyear, y = avg_acre_goal, col = projecttypename)) +
+  geom_point(size = 2) + 
+  geom_line(lwd = 1) +
+  xlab("Fiscal Year") + ylab("Acres") +
+  scale_x_continuous(breaks = seq(1992, 2030, 4)) +
+  ggtitle("Average Acre Goal per Employee")
+
+```
+
+
+---
+
+
+## SoilWeb - Time Series
+
+ - Since 2014, web traffic on SoilWeb has slowly increased from ~800 to 2,600 queries per day, with the majority of traffic peaking in the spring.
+
+
+![](C:/Users/Stephen.Roecker/NextCloud/projects/2018_ncss/soilweb_ts.png)
+
+
+---
+
+## SoilWeb - Landcover
+
+- Broken down by landcover type it is clear the predominant interest is on agricultural land.
+
+![](C:/Users/Stephen.Roecker/NextCloud/projects/2018_ncss/soilweb_landcover.png)
+
+
+---
+
+## SoilWeb - Map
+
+- Viewed spatially there is near continuous interest in soils from coast to coast, with hotspots in the predominant agricultural areas of the country.   
+
+![](C:/Users/Stephen.Roecker/NextCloud/projects/2018_ncss/soilweb_map.png)
+
+
+---
+
+
+## References
+
+Nichols, J. (2002). Memoirs of a Soil Correlator. In J. Nichols, D. Helms, A. Effland, & P. Durana (Eds.), Profiles in the History of the U.S. Soil Survey (pp. 101-148). Ames, Iowa: Iowa State Press.

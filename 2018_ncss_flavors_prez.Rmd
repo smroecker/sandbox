@@ -1,0 +1,656 @@
+---
+title: "31 Flavors of Miami and other Benchmark Soils"
+author: "Stephen Roecker, Skye Wills"
+date: "`r Sys.Date()`"
+output:
+  slidy_presentation:
+    css: css/hpstr.css
+    fig_caption: yes
+    fig_height: 3
+    fig_width: 3
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, cache = TRUE)
+
+# load packages
+suppressWarnings( {
+  library(soilDB)
+  library(lattice)
+  library(ggplot2)
+  library(dplyr)
+  library(Cairo)
+  })
+png_dplots <- function(file, width, height) Cairo(file, type = "png", width = width, height = height, units = "in", res=200, pointsize = 15)
+
+ownCloud <- "C:/Users/stephen.roecker/ownCloud/projects/2018_ncss"
+
+```
+
+
+## Abstract
+
+While there are over 25,000 established soil series in the US, the number of soil components in SSURGO is currently a staggering 645,607. Soil components represent various phases of soil series. Phases can be anything from differences in surface texture, substratum texture, erosion class, slope gradient, flooding, etc. Therefore, while soil components are representative of a soil series concept, they are unique in their own right. Benchmark soils by contrast are soil series that are representative of a taxonomic class, geographic area, or unique ecological setting. The total number of benchmark soils within the US is 1,476. Given the vast number of soil components within SSURGO, one of the major future challenges in updating and managing SSURGO will be seeing the 'forest for the trees' and vice versa. Evaluating Miami and several other benchmark soils show that numerous phases (or flavors) exist. However it is proposed that the number of soil components could be further reduced to a more manageable number without comprising the level of detail they contain.
+
+
+---
+
+
+## SDJR 2.0?
+
+- What makes a soil map unit (SMU) component different from a soil series?
+- What makes a SMU components different from each other?
+- How different are SMU components from each other?
+- How many SMU components are necessary to capture the full range of variation in a soil series?
+
+
+---
+
+
+## Soil Series and Benchmark Soil Series
+
+```{r soilseries and benchmark numbers, fig.dim = c(8, 6), fig.ext = "png", dev = "png_dplots"}
+
+ss <- get_soilseries_from_NASIS()
+
+fname <- paste0(ownCloud, "/ss_", "2018-06-25", ".csv")
+# write.csv(ss, file = fname, row.names = FALSE)
+ss <- read.csv(file = fname, stringsAsFactors = FALSE)
+
+ss$establishedyear <- ifelse(ss$establishedyear < 1883, NA, ss$establishedyear)
+
+# table(ss$soilseriesstatus)
+# table(ss$benchmarksoilflag)
+
+# tabulate all soil series
+ss_t <- as.data.frame(table(ss$establishedyear), stringsAsFactors = FALSE)
+names(ss_t)[names(ss_t) %in% c("Var1", "Freq")] <- c("year", "Count") 
+ss_t <- mutate(ss_t, 
+               year = as.numeric(year),
+               benchmark = FALSE
+               )
+
+
+# tabulate benchmark soils
+ss_b <- subset(ss, benchmarksoilflag == 1)
+ss_b_t <- as.data.frame(table(ss_b$establishedyear), stringsAsFactors = FALSE)
+names(ss_b_t)[names(ss_b_t) %in% c("Var1", "Freq")] <- c("year", "Count") 
+ss_b_t <- mutate(ss_b_t,
+                 year = as.numeric(year),
+                 benchmark = TRUE
+                 )
+
+
+# dates2 <- subset(dates, manuscript_flag == 1)
+# dates2 <- transform(dates2,
+#                     height1 = sort(rnorm(length(year), 950, 50), decreasing = TRUE),
+#                     height2 = sort(rnorm(length(year), 26000, 1400), decreasing = TRUE),
+#                     idx    = 1:length(year)
+#                     )
+
+# md <- filter(dates, manuscript_flag == 1) %>%
+#   left_join(ss_t, by = "year") %>%
+#   mutate(Count = ifelse(is.na(Count), 0, Count),
+#          dup = duplicated(year), 
+#          dif = apply(rbind(lag(year, 1) - year, 
+#                            lag(year, 2) - year, 
+#                            lag(year, 3) - year), 2, 
+#                     mean, 
+#                     na.rm = TRUE
+#                     ),
+#          dif = ifelse(dif < -15 | is.na(dif), -2, dif),
+#          dif = dif - max(dif),
+#          height1 = max(ss_t$Count) * 1 - (dif + dup) * 10,
+#          height2 = max(cumsum(ss_t$Count)) * 1 - (dif + dup) * 300
+#          )
+
+g1 <- ggplot(ss_t, aes(x = year, y = Count)) +
+  geom_area(aes(fill = benchmark)) +
+  geom_area(data = ss_b_t, aes(x = year, y = Count, fill = benchmark)) +
+  # geom_segment(data = md, aes(x = year, xend = year, y = height1, yend = 0), lty = "dotted") +
+  # geom_text(data = md, aes(x = year, y = height1, label = event), cex = 3, angle = 25, hjust = 0, vjust = 0) +
+  ylim(0, max(ss_t$Count, na.rm = TRUE)) +
+  scale_x_continuous(breaks = seq(1880, 2030, 8)) +
+  # theme(aspect.ratio = 1) + 
+  xlab("Year") + 
+  ggtitle("Number of Soil Series Established per Year")
+
+g2 <- ggplot(ss_t, aes(x = year, y = cumsum(Count))) +
+  geom_area(aes(fill = benchmark)) +
+  geom_area(data = ss_b_t, aes(x = year, y = cumsum(Count), fill = benchmark)) +
+  # geom_segment(data = md, aes(x = year, xend = year, y = height2, yend = 0), lty = "dotted") +
+  # geom_text(data = md, aes(x = year, y = height2, label = event), cex = 3, angle = 25, hjust = 0, vjust = 0) +
+  ylim(0, max(cumsum(ss_t$Count), na.rm = TRUE)) +
+  scale_x_continuous(breaks = seq(1880, 2030, 8)) +
+  # theme(aspect.ratio = 1) +
+  ylab("Count") + xlab("Year") +
+  ggtitle("Cumulative Number of Soil Series Established per Year")
+
+gridExtra::grid.arrange(g1, g2, ncol = 1)
+
+```
+
+
+---
+
+
+## Soil Map Unit Components (SSURGO)
+
+```{r component numbers, fig.dim = c(8, 6), fig.ext = "png", dev = "png_dplots"}
+
+data("state")
+states <- c(state.abb, "DC", "AS", "PR", "FM", "GU", "MH", "MP", "PW", "VI")
+
+# comp <- lapply(states, function(x) {
+#   cat("getting ", x, "\n")
+#   comp = get_component_from_SDA(
+#     WHERE = paste0("areasymbol LIKE '", x, "%' AND areasymbol != 'US'"), 
+#     childs = FALSE
+#     )
+#   if (is.data.frame(comp)) {
+#     comp$state = x
+#     return(comp)
+#     }
+#   })
+# comp <- do.call("rbind", comp)
+
+# mu <- lapply(states, function(x) {
+#   cat("getting ", x, "\n")
+#   mu = get_mapunit_from_SDA(
+#     WHERE = paste0("areasymbol LIKE '", x, "%' AND areasymbol != 'US'")
+#     )
+#   if (is.data.frame(mu)) {
+#     mu$state = x
+#     return(mu)
+#     }
+#   })
+# mu <- do.call("rbind", mu)
+
+fname <- paste0(ownCloud, "/sda_components_", "2018-06-06_us.csv")
+# write.csv(comp, file = fname, row.names = FALSE)
+comp <- read.csv(file = fname, stringsAsFactors = FALSE)
+
+# fname <- paste0(ownCloud, "/sda_mapunits_", "2018-06-06_us.csv")
+# # write.csv(mu, file = fname, row.names = FALSE)
+# mu <- read.csv(file = fname, stringsAsFactors = FALSE)
+# 
+# test <- merge(mu[c("areasymbol", "nationalmusym", "muacres")], comp, by = "nationalmusym", all.x = TRUE)
+# test <- transform(test, 
+#                   state = substr(test$areasymbol, 1, 2),
+#                   muacres2 = with(test, muacres * (comppct_r / 100))
+#                   )
+# 
+# maj <- group_by(test, compname, state) %>% 
+#   summarize(muacres = sum(muacres2, na.rm = TRUE),
+#             n_compname = length(compname[!duplicated(paste(nationalmusym, comppct_r, localphase))])
+#             ) %>%
+#   filter(!compname %in% c("NOTCOM", "Rock outcrop", "Unnamed", "Urban land") & state == "CA") %>%
+#   arrange(- n_compname) %>%
+#   as.data.frame() %>%
+#   head(50)
+
+
+comp_nodups <- comp[! duplicated(comp[c("nationalmusym", "comppct_r", "localphase")]), ]
+comp_in <- subset(comp, state == "IN")
+comp_in_nodups <- comp_in[! duplicated(comp_in[c("nationalmusym", "comppct_r", "localphase")]), ]
+
+
+test <- rbind(
+  data.frame(Type = 'Soil Series (SS)', Count = nrow(ss)),
+  data.frame(Type = 'Benchmark SS',     Count = nrow(ss[ss$benchmarksoilflag == 1, ])),
+  data.frame(Type = 'Soil Map Unit Components (SMU)', Count = nrow(comp_nodups)),
+  data.frame(Type = 'Indiana SMU Components', Count = nrow(comp_in_nodups))
+  )
+
+knitr::kable(test)
+
+```
+
+
+---
+
+
+## How Do We Phase Components?
+
+- Surface texture
+- Slope gradient
+- Erosion class
+- Flooding frequency
+- Substratum
+- ...
+
+
+---
+
+
+## How Have We Historically Populated Components?
+
+1. One or Several Typical Pedons (RV) for a Soil Series (e.g. SOI-5)
+2. Typical Pedon (RV) from the Soil Survey Area
+    - Ranges (L & H) from OSD
+    - Ranges (L & H) derived locally
+3. Copying and pasting
+
+
+---
+
+
+## What Future Challenges Do We Face?
+
+- How do we manage over 645,000 components?
+- "Work Smarter not Harder" examples:
+    - Harder
+        - John Henry vs. the Steam Engine or
+        - Sarah Connor vs. the Terminator (Terminator 1)
+    - Smarter
+        - John Conner with the Terminator (Terminator 2)
+- Incorporated Dynamic Soil Properties
+- Embrace technology (easier said than done)!
+
+
+---
+
+
+# Depth Plots of Benchmark Soil Series
+
+```{r load-comp-data, eval=FALSE}
+
+# query benchmark soils
+# sql <- "compname IN ('Drummer', 'Cecil', 'Gilpin', 'Josephine', 'Miami', 'Tama', 'Wilson') AND majcompflag = 'Yes' AND areasymbol != 'US'"
+sql <- "compname IN ('Crosby', 'Brookston', 'Miami', 'Hosmer', 'Fincastle') AND majcompflag = 'Yes' AND areasymbol != 'US'"
+
+
+# get components
+co <- get_component_from_SDA(WHERE = sql)
+
+# prep components
+co <- transform(co, 
+                slope_phase = cut(co$slope_r, breaks = c(0, 2, 8, 15, 30, 50, 75), labels = c("0-2", "2-8", "8-15", "15-30", "30-50", "50-75")),
+                tfact = as.character(tfact)
+                )
+
+# get component flooding
+# cosm <- get_cosoilmoist_from_SDA(WHERE = "compname IN ('Drummer', 'Cecil', 'Gilpin', 'Josephine', 'Miami', 'Tama', 'Wilson') AND areasymbol != 'US'")
+cosm <- get_cosoilmoist_from_SDA(WHERE = "compname IN ('Crosby', 'Brookston', 'Miami', 'Hosmer', 'Fincastle') AND areasymbol != 'US'")
+cosm <- subset(cosm, nationalmusym %in% co$nationalmusym &
+                     compname %in% co$compname &
+                     comppct_r %in% co$comppct_r
+                     )
+co_flodfreqcl <- group_by(cosm, nationalmusym, compname, comppct_r) %>%
+  summarize(flodfreqcl = paste(sort(unique(flodfreqcl)), collapse = ", "))
+
+co <- merge(co, co_flodfreqcl, by = c("nationalmusym", "compname", "comppct_r"), all.x = TRUE)
+
+
+# get horizons
+h  <- get_chorizon_from_SDA(WHERE = sql)
+h <- subset(h, cokey %in% co$cokey)
+
+# prep horizons
+surface_texture <- {
+  split(h, h$cokey) ->.;
+  lapply(., function(x) {
+    data.frame(cokey           = x$cokey[1], 
+               surface_texture = x[which.min(x$hzdept_r), "texture"]
+    )}) ->.;
+  do.call("rbind", .)
+  }
+
+co <- merge(co, surface_texture, by = "cokey", all.x = TRUE)
+
+depths(h) <- cokey ~ hzdept_r + hzdepb_r
+site(h) <- co
+# h <- subsetProfiles(h, s = '! cokey %in% c(15233429, 15233431, 14599299, 14599305, 14582276, 14582281, 14582285, 14582289, 14582294, 14582297, 14582300, 14471214)')
+h <- subsetProfiles(h, s = '! cokey %in% c(15456469)')
+h0 <- h
+
+
+# compute clusters
+hvars <- c("claytotal_r", "om_r", "ph1to1h2o_r", "dbthirdbar_r", "caco3_r")
+
+h <- subsetProfiles(h, s = "compname == 'Miami'")
+horizons(h)[hvars] <- scale(horizons(h)[hvars])
+d <- profile_compare(h, vars = hvars, k = 0, max_d = 100, sample_interval = 2)
+clust <- cluster::diana(d)
+
+# n <- 50
+# Si <- numeric(n)
+# for (k in 2:n) {
+#   sil = silhouette(cutree(clust, k = k), d)
+#   Si[k] = summary(sil)$avg.width
+#   }
+# 
+# k.best <- which.max(Si)
+# plot(1:n, Si, type = "h", 
+#      main = "Silhouette-optimal number of clusters",
+#      xlab = "k (number of clusters)",
+#      ylab = "Average silhouette width"
+#      )
+
+h_10 <- cutree(clust, k = 10)
+
+site(h0) <- data.frame(cokey = attributes(d)$Labels, clusters = as.character(h_10))
+
+save.image(file = paste0(ownCloud, "/comp_data_workspace.RData"))
+
+```
+
+```{r load-pedon-data, eval=FALSE}
+
+
+
+```
+
+```{r dplots, fig.dim = c(8, 6), fig.ext = "png", dev = "png_dplots"}
+load(file = paste0(ownCloud, "/comp_data_workspace.RData"))
+
+h_slice <- aqp::slice(h0, 0:100 ~ claytotal_r + om_r + ph1to1h2o_r + dbthirdbar_r + caco3_r)
+
+test0 <- horizons(h_slice)
+test0 <- merge(test0, site(h0), by = "cokey", all.x = TRUE)
+
+hvars <- c("claytotal_r", "om_r", "ph1to1h2o_r", "dbthirdbar_r", "caco3_r")
+pvars <- c("slope_phase", "pmkind", "landform", "hillslopeprof", "slopeshape", "geompos", "earthcovkind1", "erocl", "surface_texture", "clusters")
+test <- reshape(test0[c("compname", "cokey", "hzdept_r", hvars, pvars)],
+                direction = "long",
+                timevar = "variable", times = hvars,
+                v.names = "value",    varying = hvars
+                )
+
+
+# depth plot function
+#ordering of groups is handled by ggplot2
+gg_depthplot <- function(compname2, df, map, var, lwd = 1) {
+  filter(df, compname %in% compname2 & variable %in% c("claytotal_r", "om_r", "caco3_r")) %>%
+    mutate(variable = factor(variable, 
+                             levels = c("claytotal_r", "om_r", "caco3_r")
+                             )) %>%
+    ggplot(map) +
+    geom_line(aes(group = cokey), alpha = 0.1, lwd = 0.75) +
+    geom_smooth(se = FALSE, lwd = lwd) +
+    xlim(100, 0) + xlab("depth (cm)") +
+    coord_flip() +
+    facet_wrap(compname ~ variable, scales = "free_x", nrow = 1) +
+    # theme(aspect = 1) +
+    ggtitle(var)
+}
+
+filter(test0) %>% #, compname %in% c("Wilson", "Cecil", "Miami", "Josephine")) %>%
+  ggplot(aes(x = hzdept_r, y = claytotal_r)) +
+    geom_line(aes(group= cokey), alpha = 0.1, lwd = 0.5) +
+    geom_smooth(lwd = 1, se = FALSE) +
+    xlim(100, 0) + ylab("clay (%)") + xlab("depth (cm)") +
+    coord_flip() +
+    facet_wrap(~ compname, scales = "free_x", nrow = 1) +
+    # theme(aspect = 1) +
+    ggtitle("Benchmark Soil Series")
+
+```
+
+
+```{r lattice-depth-plots-example, eval = FALSE}
+# ordering of groups is dependent on data.frame
+test <- with(test, test[order(compname, cokey, hzdept_r), ])
+
+xyplot(data = test, x = hzdept_r ~ claytotal_r | compname, groups = cokey,
+       par.setting = list(superpose.line(alpha = 0.2, col = "#000000"))     
+       panel = function(...) {
+              panel.xyplot(..., type = c('l', 'g'))
+              panel.loess(..., degree = 2, horizontal = TRUE, lwd = 3)
+              },
+            ylim = c(100, 0), ylab = "depth (cm)", xlab = "clay (%)",
+            scales = "free", aspect = 1, as.table = TRUE,
+            strip = strip.custom(bg="lightgrey"),
+            auto.key = list(text = "Major Components", lines = TRUE, points = FALSE),
+            main = "Depth Plots for State Soils in Region 11"
+            )
+
+Cairo(file = "r11_state_soils.png", width = 8, height = 5, units = "in", dpi = 100, type = "png")
+p
+dev.off()
+
+
+
+test = get_component_from_SDA(WHERE = "areasymbol = 'IN001'")
+
+test2 = group_by(test, nationalmusym) %>% arrange(- comppct_r) %>% filter(between(row_number(), 1, 2)) %>% arrange(nationalmusym)
+
+h <- get_chorizon_from_SDA(WHERE = "compname = 'Miami' AND majcompflag = 'Yes' AND areasymbol != 'US'")
+
+
+ggplot(h, aes(x = hzdept_r, y = claytotal_r)) +
+  geom_line(aes(group = cokey), alpha = 0.1) +
+  geom_smooth(method = "gam") + # method = "loess", n = 50) +
+  xlim(100, 0) +
+  coord_flip()
+
+
+panel = function(x, y, ...) {
+  panel.xyplot(x, y, ..., type = c("l", "g"), col = "black", alpha = 0.1)
+  panel.loess(x, y, ..., horizontal = TRUE, lwd = 3)
+}
+xyplot(data = h, x = hzdept_r ~ claytotal_r,
+       ylim = c(200, 0),
+       panel = panel
+       )
+       
+
+```
+
+
+---
+
+## Miami Depth Plots - Landform
+
+```{r landform, fig.dim = c(10, 6), fig.ext = "png", dev = "png_dplots"}
+gg_depthplot("Miami", test, aes(x = hzdept_r, y = value, col = landform), "Landform", 1.5)
+```
+
+---
+
+## Miami Depth Plots - Parent Material
+```{r parent-material, fig.dim = c(10, 6), fig.ext = "png", dev = "png_dplots"}
+gg_depthplot("Miami", test, aes(x = hzdept_r, y = value, col = pmkind), "Parent Material", 1.5)
+```
+
+---
+
+
+# Miami Heatmap - Landform vs Parent Material
+
+```{r landform-pm, fig.dim = c(10, 6), fig.ext = "png", dev = "png_dplots"}
+# query all Miami major components
+s <- subset(co, compname == 'Miami' & majcompflag == 'Yes')
+
+# landform vs 3-D morphometry
+test2 <- {
+  subset(s, ! is.na(landform) | ! is.na(pmkind)) ->.;
+  split(., .$drainagecl, drop = TRUE) ->.;
+  lapply(., function(x) {
+    test2 = data.frame()
+    test2 = as.data.frame(table(x$landform, x$pmkind))
+    test2$compname   = x$compname[1]
+    test2$drainagecl = x$drainagecl[1]
+    names(test2)[1:2] <- c("landform", "pmkind")
+    return(test2)
+    }) ->.;
+  do.call("rbind", .) ->.;
+  .[.$Freq > 0, ] ->.;
+  within(., {
+    landform = reorder(factor(landform), Freq, max)
+    pmkind  = reorder(factor(pmkind),  Freq, max)
+    pmkind  = factor(pmkind, levels = rev(levels(pmkind)))
+  }) ->.;
+  }
+test2$Count <- cut(test2$Freq, 
+                  breaks = c(0, 5, 10, 25, 50, 100, 150),
+                  labels = c("<5", "5-10", "10-25", "25-50", "50-100", "100-150")
+                  )
+ggplot(test2, aes(x = pmkind, y = landform, fill = Count)) + 
+  geom_tile(alpha = 0.5) + facet_wrap(~ paste0(compname, "\n", drainagecl)) +
+  viridis::scale_fill_viridis(discrete = T) +
+  theme(aspect.ratio = 1, axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  ggtitle("Landform vs Parent Material")
+
+```
+
+---
+
+## Miami Depth Plots - Slope Phase
+```{r slope-phase, fig.dim = c(10, 6), fig.ext = "png", dev = "png_dplots"}
+gg_depthplot("Miami", test, aes(x = hzdept_r, y = value, col = slope_phase), "Slope Phase", 1.5)
+```
+
+---
+
+## Miami Depth Plots - Surface Texture
+```{r surface-texture, fig.dim = c(10, 6), fig.ext = "png", dev = "png_dplots"}
+
+data(metadata)
+
+test$surface_texture <- factor(test$surface_texture,
+                               levels = metadata[metadata$ColumnPhysicalName == "texcl", "ChoiceName"]
+                               )
+
+gg_depthplot("Miami", test, aes(x = hzdept_r, y = value, col = surface_texture), "Surface Texture", 1.5)
+```
+
+---
+
+## Miami Depth Plots - Erosion Class
+```{r erosion-class, fig.dim = c(10, 6), fig.ext = "png", dev = "png_dplots"}
+test$erocl <- factor(test$erocl, 
+                     levels = sort(unique(test$erocl))[c(5, 1:4)], 
+                     labels = c("None", "Slightly", "Moderately", "Severely", "Extremely")
+                     )
+
+gg_depthplot(c("Miami"), test, aes(x = hzdept_r, y = value, col = erocl), "Erosion Class", 1.5)
+```
+
+---
+
+# Miami Depth Plots - Hierarchical Clusters
+
+```{r, fig.dim = c(10, 6), fig.ext = "png", dev = "png_dplots"}
+test$clusters <- factor(test$clusters, levels = 1:10)
+
+gg_depthplot(c("Miami"), test, aes(x = hzdept_r, y = value, col = clusters), "Hierarchical Clusters", 1.5)
+```
+
+---
+
+
+## How Many Unique Combinations Exist?
+
+- Tier 1 Phases = surface teture + slope + erosion class + flooding frequency
+- Tier 2 Phases = Tier 1 + landform + parent material
+- Unique Horizons 1 = horizon depths + clay content
+- Unique Horizons 2 = unique horizons 1 + organic matter + carbonates 
+
+```{r unique}
+co <- mutate(co,
+             flodfreqcl = ifelse(flodfreqcl == "Not populated", "None", flodfreqcl),
+             tier1 = paste(surface_texture, slope_phase, erocl, flodfreqcl),
+             tier2 = paste(surface_texture, slope_phase, erocl, flodfreqcl, landform, pmkind)
+             )
+
+h  <- get_chorizon_from_SDA(WHERE = sql)
+h <- subset(h, cokey %in% co$cokey)
+test <- group_by(h, cokey) %>%
+  summarize(hzdept_r    = paste(hzdept_r,    collapse = ", "),
+            claytotal_r = paste(claytotal_r, collapse = ", "),
+            om_r        = paste(om_r,        collapse = ", "),
+            caco3_r     = paste(caco3_r,     collapse = ", ")
+            )
+
+co <- merge(co, test, by = "cokey", all.x = TRUE)
+
+filter(co) %>%
+  group_by(compname) %>% 
+  summarize(n_majcompflag = length(majcompflag),
+            n_tier1 = length(unique(tier1)),
+            n_tier2 = length(unique(tier2)),
+            n_unique_h1 = length(unique(paste(hzdept_r, claytotal_r))),
+            n_unique_h2 = length(unique(paste(hzdept_r, claytotal_r, om_r, caco3_r)))
+            ) %>%
+  arrange(- n_tier2) %>%
+  as.data.frame() %>%
+  knitr::kable()
+
+```
+
+
+---
+
+
+## Interpretations
+
+```{r interps, fig.dim = c(10, 6), fig.ext = "png", dev = "png_dplots"}
+
+# interps <- {
+#   split(co, co$compname) ->.;
+#   lapply(., function(x) {
+#     cat("getting ", unique(x$compname), "\n")
+#     get_cointerp_from_SDA(WHERE = paste0("cokey IN ('", paste(x$cokey, collapse = "', '"), "')", collapse = ""))
+#     }) ->.;
+#   do.call("rbind", .)
+#   }
+fname <- paste0(ownCloud, "/interps_", "2018-06-26", ".csv")
+# write.csv(interps, file = fname, row.names = FALSE)
+interps <- read.csv(file = fname, stringsAsFactors = FALSE)
+
+data(state)
+interps_list <- sort(unique(interps$mrulename[!grepl(paste0("(", paste0(state.abb, collapse = ")|("), ")"), interps$mrulename)]))
+# View(cbind(interps_list))
+idx <- c(1, 6, 28, 30, 33)
+
+interps <- merge(interps, site(h0)[c("cokey", "compname", pvars)], by = "cokey", all.x = TRUE)
+data(metadata)
+interps$erocl <- factor(interps$erocl,
+                        levels = sort(unique(interps$erocl))[c(5, 1:4)],
+                        labels = metadata[metadata$ColumnPhysicalName == "erocl", "ChoiceName"]
+                        )
+
+filter(interps, mrulename %in% interps_list[idx] & compname == "Miami") %>%
+  mutate(
+    rule_number = factor(mrulename, 
+                         levels = interps_list[idx],
+                         labels = idx
+                         ),
+    idx = as.numeric(rule_number)
+    ) %>%
+  ggplot(aes(x = interplr)) +
+  geom_density(fill = "grey", alpha = 0.5) +
+  facet_grid(idx ~ compname, scale = "free_y") +
+  xlab("fuzzy rating")
+
+```
+
+
+---
+
+
+## Interpretations
+
+```{r interps-list}
+
+knitr::kable(data.frame(rule_number = idx,
+                        interp = interps_list[idx]
+                        ))
+
+```
+
+
+---
+
+
+## Conclusions & Recommendations
+
+- This analysis suggests the total number of soil components could be reduced to a more manageable number without compromising the level of detail they contain.
+ - Numerous components have the same or very similar horizon data.
+- A limited selection of interpretations show that only 4 types of Miami necessary.
+- Reduce the number of components by developing a representative set of component phases for each soil series and link to the appropriate soil map unit.
+
+
