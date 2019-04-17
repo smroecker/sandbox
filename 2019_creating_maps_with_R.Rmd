@@ -92,6 +92,7 @@ st <- state.abb
 # corn_us <- do.call("rbind", corn_us)
 # 
 # save(corn_us, file = "C:/workspace2/corn_us.RData")
+# write.csv(corn_us, file = "nass_corn_us.csv", row.names = FALSE)
 
 load(file = "C:/Users/Stephen.Roecker/Nextcloud/data/corn_us.RData")
 corn_yield <- subset(corn_us, short_desc == "CORN, GRAIN - YIELD, MEASURED IN BU / ACRE")
@@ -107,6 +108,25 @@ cnty_corn <- merge(cnty, corn_yield,
                    by.y = c("state_alpha", "county_code"), 
                    all.x = TRUE
                    )
+
+corn_states <- c("IL", "IA", "IN", "MI", "MN", "MO", "NE", "OH", "SD", "ND", "WI")
+
+library(dplyr)
+library(ggplot2)
+
+group_by(corn_yield, state_alpha, year) %>%
+  summarize(
+    yield_low    = min(Value, na.rm = TRUE),
+    yield_median = median(Value, na.rm = TRUE),
+    yield_max    = max(Value, na.rm = TRUE)
+    ) %>%
+  filter(state_alpha %in% corn_states) %>%
+  ggplot(aes(x = year, y = yield_median)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = yield_low, ymax = yield_max), alpha = 0.25) +
+  facet_wrap(~ state_alpha) +
+  ylab("median yield per county (bu/acre)") +
+  ggtitle("USDA-NASS Corn Yields")
 
 ```
 
@@ -186,7 +206,8 @@ gmap <- get_map(bb, maptype = "terrain", source = "osm")
 # Lines
 ggmap(gmap) +
   geom_path(data = st, aes(x = long, y = lat, group = group))
-
+  # geom_sf(data = cnty, fill = NA, inherit.aes = FALSE) +
+  # guides(fill = FALSE)
 
 # geom_sf() doesn't work with ggmp, their is a systematic shift https://github.com/r-spatial/sf/issues/336
 
