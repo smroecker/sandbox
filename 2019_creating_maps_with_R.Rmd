@@ -26,9 +26,9 @@ Most data has a spatial dimension to it. Knowing 'where' the data is coming from
 
 # Example datasets
 
-```{r get-data}
+## maps R package
 
-# maps R package
+```{r example-maps}
 
 library(maps)
 library(maptools)
@@ -48,22 +48,73 @@ str(st_sp, 2)
 
 plot(st_sp)
 
+```
 
 
-# County Data
+
+## County Data
+
+```{r example-county}
 
 library(sf)
 library(USAboundaries)
 
 cnty <- us_counties() 
-cnty <- subset(cnty, !state_name %in% c("Alaska", "Hawaii", "Puerto Rico"))
+cnty <- subset(cnty, !state_name %in% c("Alaska", "Hawaii"))
 
 vars <- c("statefp", "countyfp")
 plot(cnty[vars])
 
+```
 
 
-# USDA-NASS Corn Yield Data https://github.com/potterzot/rnassqs
+
+## Indiana STASTGO2
+
+```{r example-statsgo}
+
+IN <- read_sf(dsn = "D:/geodata/soils/soils_GSMCLIP_mbr_2599033_03/wss_gsmsoil_IN_[2006-07-06]/spatial/gsmsoilmu_a_in.shp", layer = "gsmsoilmu_a_in")
+
+# simplify polygons
+IN <- rmapshaper::ms_simplify(IN)
+
+```
+
+
+
+## KSSL
+
+```{r example-kssl}
+
+library(aqp)
+library(soilDB)
+
+miami <- fetchKSSL("Miami")
+idx <- complete.cases(miami$x, miami$y)
+
+miami_sp <- miami[idx, ]
+coordinates(miami_sp) <- ~ x + y
+proj4string(miami_sp) <- CRS("+init=epsg:4326")
+
+miami_sp <- SpatialPointsDataFrame(
+  coords = coordinates(miami_sp@sp),
+  data   = site(miami_sp),
+  proj4string = CRS(proj4string(miami_sp))
+  )
+miami_sf <- st_as_sf(miami_sp)
+miami_sf <- within(miami_sf, {
+  lon = st_coordinates(miami_sf)[, 1]
+  lat = st_coordinates(miami_sf)[, 2]
+  })
+
+```
+
+
+
+## USDA-NASS Corn Yield Data
+https://github.com/potterzot/rnassqs
+
+```{r example-nass}
 
 # devtools::install_github('potterzot/rnassqs')
 # library(rnassqs)
@@ -121,12 +172,19 @@ group_by(corn_yield, state_alpha, year) %>%
     yield_max    = max(Value, na.rm = TRUE)
     ) %>%
   filter(state_alpha %in% corn_states) %>%
-  ggplot(aes(x = year, y = yield_median)) +
-  geom_line() +
-  geom_ribbon(aes(ymin = yield_low, ymax = yield_max), alpha = 0.25) +
-  facet_wrap(~ state_alpha) +
-  ylab("median yield per county (bu/acre)") +
+  mutate(state = state_alpha,
+         source = "NASS"
+         ) %>%
+  ggplot() +
+  geom_line(aes(x = year, y = yield_median, col = source)) +
+  geom_ribbon(aes(x = year, ymin = yield_low, ymax = yield_max), alpha = 0.25) +
+  facet_wrap(~ state) +
+  ylab("yield per county (bu/acre)") +
   ggtitle("USDA-NASS Corn Yields")
+  # geom_point(data = yld_sum[yld_sum$state %in% corn_states, ], aes(x = 2018, y = yield_med, col = "NASIS"), size = 1) +
+  # geom_ribbon(data = yld_sum2[yld_sum2$state %in% corn_states, ], aes(x = year, ymin = yield_low2, ymax = yield_max2, col = "NASIS"), alpha = 0.25) +
+  # geom_pointrange(data = yld_sum[yld_sum$state %in% corn_states, ], aes(x = 2018, y = yield_med, ymin = yield_low2, ymax = yield_max2, col = source))
+
 
 ```
 
@@ -146,6 +204,7 @@ st <- map_data("state")
 
 # tidy example data
 st_tidy <- broom::tidy(st_sp, region = "state") 
+IN_tidy <- broom::tidy(as(IN, "Spatial"), region = "MUSYM")
 
 dim(st_sp)
 dim(st)
@@ -153,7 +212,13 @@ dim(st)
 
 # Lines
 ggplot() +
-  geom_path(data = st, aes(x = long, y = lat, group = group))
+  geom_point(data = miami_sf, aes(x = lon, y = lat)) +
+  geom_path(data = st, aes(x = long, y = lat, group = group)) +
+  xlim(range(miami_sf$lon)) +
+  ylim(range(miami_sf$lat)) +
+  ggtitle("Location of Miami Lab Pedons")
+  
+  
 
 # Polygons
 ggplot() +
@@ -198,15 +263,15 @@ ggplot() +
 library(ggmap)
 
 # get ggmap
-bb <- sf::st_bbox(cnty)
+bb <- sf::st_bbox(IN)
 bb <- make_bbox(lon = bb[c(3, 1)], lat = bb[c(2, 4)])
 gmap <- get_map(bb, maptype = "terrain", source = "osm")
 
 
 # Lines
 ggmap(gmap) +
-  geom_path(data = st, aes(x = long, y = lat, group = group))
-  # geom_sf(data = cnty, fill = NA, inherit.aes = FALSE) +
+  geom_path(data = IN_tidy, aes(x = long, y = lat, group = group))
+  # geom_sf(data = IN, fill = NA, inherit.aes = FALSE) +
   # guides(fill = FALSE)
 
 # geom_sf() doesn't work with ggmp, their is a systematic shift https://github.com/r-spatial/sf/issues/336
@@ -221,8 +286,9 @@ ggmap(gmap) +
 
 library(tmap)
 
-tm_shape(cnty) + tm_polygons("state_name", border.col = NULL) +
-  tm_shape(st_sp) + tm_borders() +
+tm_shape(IN) + tm_polygons("MUSYM", border.col = NULL) +
+  tm_shape(cnty) + tm_borders() +
+  tm_shape(miami_sf) + tm_dots() +
   tm_legend(legend.outside = TRUE)
 
 
@@ -230,7 +296,7 @@ tm_shape(cnty) + tm_polygons("state_name", border.col = NULL) +
 tmap_mode("view")
 
 tm_basemap("OpenStreetMap") +
-  tm_shape(st_sp) + tm_borders()
+  tm_shape(IN) + tm_borders()
 
 
 ```
@@ -245,7 +311,7 @@ library(mapview)
 
 cols <- RColorBrewer::brewer.pal(50, "Paired")
 
-test <- mapview(st_sp, zcol = "state", lwd = 0, col.regions = cols) +
+test <- mapview(IN, zcol = "MUSYM", lwd = 0, col.regions = cols) +
   mapview(cnty, type = "l")
 
 test
@@ -264,10 +330,8 @@ mapshot(test, url = "C:/workspace2/test.html", selfcontained = FALSE)
 library(leaflet)
 
 test <- leaflet() %>%
-  addTiles(group = "OSM (default)") %>%
   addProviderTiles("Esri.WorldImagery", group = "Imagery") %>%
- addProviderTiles("Esri.WorldShadedRelief", group = "ShadedRelief") %>%
-  addPolygons(data = st_sp, color = cols, weight = 0, opacity = 0.5)
+  addPolygons(data = IN, fill = FALSE, color = "black", weight = 2)
 
 test
 
