@@ -217,27 +217,24 @@ ggplot() +
   xlim(range(miami_sf$lon)) +
   ylim(range(miami_sf$lat)) +
   ggtitle("Location of Miami Lab Pedons")
-  
-  
+
 
 # Polygons
 ggplot() +
   geom_polygon(data = st_tidy, aes(x = long, y = lat, group = group, fill = id)) +
+  coord_map(projection = "albers", lat0 = 39, lat1 = 45) +
   # remove legend
   guides(fill = FALSE)
 
 
+
 # sf package
-
-# Lines
-ggplot() +
-  geom_sf(data = cnty, fill = NA) +
-  guides(fill = FALSE)
-
 
 # Polygons
 ggplot() +
   geom_sf(data = cnty, aes(fill = statefp, lty = NA)) +
+  geom_sf(data = miami_sf) +
+  coord_sf(crs = "+init=epsg:5070") +
   guides(fill = FALSE)
 
 
@@ -345,6 +342,10 @@ htmlwidgets::saveWidget(test, file = "C:/workspace2/test.html", selfcontained = 
 # Additional Reading
 
 Healy, K., 2018. Data Visualization: a practical introduction. Princeton University Press. [http://socviz.co/](http://socviz.co/)
+
+Gimond, M., 2019. Intro to GIS and Spatial Analysis. [https://mgimond.github.io/Spatial/](https://mgimond.github.io/Spatial/)
+
+Hijmans, R.J., 2019. Spatial Data Science with R. [https://rspatial.org/](https://rspatial.org/)
 
 Lovelace, R., J. Nowosad, and J. Muenchow, 2019. Geocomputation with R. CRC Press. [https://bookdown.org/robinlovelace/geocompr/](https://bookdown.org/robinlovelace/geocompr/)
 
