@@ -151,6 +151,7 @@ corn_yield <- within(corn_yield, {
   Value      = as.numeric(Value)
   year       = as.numeric(year)
   state_name = NULL
+  state      = state_alpha 
   })
 
 
