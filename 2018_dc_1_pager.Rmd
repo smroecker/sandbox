@@ -1,0 +1,33 @@
+---
+title: "Soil Data & R - Increasing access and Insights"
+author: "Stephen Roecker"
+date: "February 3, 2018"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+The World is drowning in data, and the Soil Science Division (SSD) is no exception. In an effort to stem the tide, the SSD's Region 11 Office has contributed many new additional features to the [soilDB](https://github.com/ncss-tech/soilDB) and [soilReports](https://github.com/ncss-tech/soilReports) R packages. These new features make it possible for soil scientists to quickly access and analyze data from the SSDs many [soil databases](https://www.nrcs.usda.gov/wps/portal/nrcs/detailfull/soils/focusteams/?cid=nrcseprd1319431%20); for both internal use and interactive [web applications](https://usda.shinyapps.io/r11_app/). Also thanks to R's graphing capabilities the SSD's soil data can be readily visualized in order to easily identify patterns in the data and better communicate project results.
+
+```{r}
+
+library(soilDB); library(aqp); library(ggplot2)
+
+SQL <- "majcompflag = 'Yes' AND compname IN ('Antigo', 'Drummer', 'Menfro', 'Miami', 'Miamian', 'Tama')"
+components <- fetchSDA_component(WHERE = SQL)
+c_slice <- slice(components, seq(0, 100, 2) ~ claytotal_r)
+h <- horizons(c_slice); s <- site(c_slice)
+test <- merge(h, s[c("cokey", "compname")], by = "cokey", all.x = TRUE)
+
+ggplot(test, aes(x = hzdept_r, y = claytotal_r)) + 
+  geom_line(aes(group = cokey), alpha = 0.1) + 
+  geom_smooth(n = 100, se = FALSE, lwd = 1.2) + 
+  xlim(100, 0) + ylab("clay (%)") + xlab("depth (cm)") +
+  coord_flip() +
+  facet_wrap(~ compname, scales = "free_x") +
+  theme(aspect = 1)
+
+
+```
