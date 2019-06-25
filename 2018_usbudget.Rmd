@@ -68,20 +68,24 @@ Sources
 
 ```{r wh-data, eval=FALSE}
 
-links <- list(budauth = "https://www.whitehouse.gov/wp-content/uploads/2018/02/budauth-fy2019.csv",
-              outlays = "https://www.whitehouse.gov/wp-content/uploads/2018/02/outlays-fy2019.csv",
-              receipts = "https://www.whitehouse.gov/wp-content/uploads/2018/02/receipts-fy2019.csv"
+links <- list(budauth = "https://www.whitehouse.gov/wp-content/uploads/2019/03/budauth-fy2020.xlsx",
+              outlays = "https://www.whitehouse.gov/wp-content/uploads/2019/03/outlays-fy2020.xlsx",
+              receipts = "https://www.whitehouse.gov/wp-content/uploads/2019/03/receipts-fy2020.xlsx"
               )
-files_raw <- lapply(links, function(x) read.csv(x, stringsAsFactors = FALSE))
+files_raw <- lapply(links, function(x) {
+  download.file(x, "C:/workspace2/temp.xlsx", mode = "wb")
+  as.data.frame(readxl::read_excel("temp.xlsx"))
+  })
 
+  
 # budget authority (e.g. what the federal government is allowed to spend)
 files <- lapply(files_raw, function(x) {
   # remove X from fiscal years
-  names(x) = gsub("^X", "", names(x))
+  names(x) = gsub(" ", ".", names(x))
   # convert dollars from string to numeric
   if (any(names(x) == "1962")) {
-    vars = as.character(1962:2023)
-    } else vars = as.character(1976:2023)
+    vars = as.character(1962:2024)
+    } else vars = as.character(1976:2024)
   x[vars] = lapply(x[vars], function(y) as.numeric(gsub(",", "", y)) * 1000)
   return(x)
 })
@@ -92,6 +96,51 @@ receipts <- files$receipts
 
 ```
 
+
+
+## Gross Domestic Product (GDP)
+
+Sources
+
+- [US Bureau of Economic Analysis](https://apps.bea.gov/iTable/iTable.cfm?ReqID=19&step=4&isuri=1&1921=flatfiles)
+- [FredCast](https://fred.stlouisfed.org/)
+
+```{r gdp, eval=FALSE}
+
+gdp_all <- read.csv("https://apps.bea.gov/national/Release/TXT/NipaDataA.txt", stringsAsFactors = FALSE)
+gdp <- subset(gdp_all, X.SeriesCode == "A001RC")[-1]
+names(gdp) <- c("year", "gdp")
+gdp$gdp <- as.numeric(gsub(",", "", gdp$gdp)) * 1e6
+
+# # Data from FredCast
+#gdp_raw <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?id=GNPA&scale=left&cosd=1929-01-01&coed=2017-01-01&fq=Annual&fam=avg&fgst=lin&fgsnd=2009-06-01&line_index=1&transformation=lin&vintage_date=2018-10-15&revision_date=2018-10-15&nd=1929-01-01", stringsAsFactors = FALSE)
+# gdp$DATE <- format(as.Date(gdp$DATE), "%Y")
+# names(gdp) <- c("year", "gdp")
+# gdp <- subset(gdp, year %in% 1947:2019)
+
+```
+
+
+
+## Consumer Price Index
+
+Sources
+
+- [US Bureau of Labor Statistics](https://www.bls.gov/)
+- [FredCast](https://fred.stlouisfed.org/)
+
+```{r cpi_numbers, eval=FALSE}
+
+cpi_raw <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=1169&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=CPIAUCSL&scale=left&cosd=1947-01-01&coed=2018-01-01&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=3&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Annual&fam=avg&fgst=lin&fgsnd=2009-06-01&line_index=1&transformation=lin&vintage_date=2019-06-25&revision_date=2019-06-25&nd=1947-01-01", stringsAsFactors = FALSE)
+cpi <- cpi_raw
+names(cpi) <- c("year", "cpi")
+cpi <- within(cpi, {
+  year = as.integer(format(as.Date(year), "%Y"))
+  cpi  = as.numeric(cpi)
+  adj = cpi[year == 2019] / cpi
+  })
+
+```
 
 
 ## USDA data
@@ -105,12 +154,12 @@ top <- 10
 title <- paste("Top", top, ifelse(group == "Bureau.Name", "US", "USDA"))
 
 gg_budget <- function(group, USDA, top, title) {
-  budauth2 = {budauth ->.;
+  budauth2 <- {budauth ->.;
     within(., {group = .[, group]}) ->.;
     if (USDA == TRUE) {
       subset(., Agency.Name == "Department of Agriculture") ->.;
       }
-    vars <- as.character(1976:2023)
+    vars <- as.character(1976:2024)
     .[c("group", vars)] ->.;
     reshape(., direction = "long",
             timevar = "variable", times   = vars, 
@@ -125,7 +174,7 @@ gg_budget <- function(group, USDA, top, title) {
     }
   
   top51 = {
-    subset(budauth2, variable == "2018") -> .;
+    subset(budauth2, variable == "2019") -> .;
     .[order(- .$value), ] ->.;
     head(., top) ->.;
     }
@@ -156,51 +205,6 @@ filter(budauth2, group == "Natural Resources Conservation Service") %>%
 ```
 
 
-
-## Gross Domestic Product (GDP)
-
-Sources
-
-- [US Bureau of Economic Analysis](https://apps.bea.gov/iTable/iTable.cfm?ReqID=19&step=4&isuri=1&1921=flatfiles)
-- [FredCast](https://fred.stlouisfed.org/)
-
-```{r gdp, eval=FALSE}
-
-gdp_all <- read.csv("https://apps.bea.gov/national/Release/TXT/NipaDataA.txt", stringsAsFactors = FALSE)
-gdp <- subset(gdp_all, X.SeriesCode == "A001RC")[-1]
-names(gdp) <- c("year", "gdp")
-gdp$gdp <- as.numeric(gsub(",", "", gdp$gdp)) * 1e6
-
-# # Data from FredCast
-#gdp_raw <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?id=GNPA&scale=left&cosd=1929-01-01&coed=2017-01-01&fq=Annual&fam=avg&fgst=lin&fgsnd=2009-06-01&line_index=1&transformation=lin&vintage_date=2018-10-15&revision_date=2018-10-15&nd=1929-01-01", stringsAsFactors = FALSE)
-# gdp$DATE <- format(as.Date(gdp$DATE), "%Y")
-# names(gdp) <- c("year", "gdp")
-# gdp <- subset(gdp, year %in% 1947:2018)
-
-```
-
-
-
-## Consumer Price Index
-
-Sources
-
-- [US Bureau of Labor Statistics](https://www.bls.gov/)
-- [FredCast](https://fred.stlouisfed.org/)
-
-```{r cpi_numbers, eval=FALSE}
-
-cpi_raw <- read.csv("https://fred.stlouisfed.org/graph/fredgraph.csv?id=CPIAUCSL&cosd=1947-01-01&coed=2018-09-01&fq=Annual&fam=avg&fgst=lin&fgsnd=2009-06-01&line_index=1&transformation=lin&vintage_date=2018-10-15&revision_date=2018-10-16&nd=1947-01-01", stringsAsFactors = FALSE)
-cpi <- cpi_raw
-names(cpi) <- c("year", "cpi")
-cpi <- within(cpi, {
-  year = as.integer(format(as.Date(year), "%Y"))
-  cpi  = as.numeric(cpi)
-  adj = cpi[year == 2017] / cpi
-  })
-```
-
-
 ## Save Snapshot
 
 ```{r, eval=FALSE}
@@ -225,12 +229,12 @@ load(file = "C:/workspace2/usbudget.RData")
 ```{r}
 
 # FY19 Budget Authorization
-formatC(sum(budauth$`2018`[budauth$`2019` > 0]), format = "fg", big.mark = ",")
-formatC(sum(budauth$`2018`[budauth$`2019` < 0]), format = "fg", big.mark = ",")
+formatC(sum(budauth$`2019`[budauth$`2019` > 0]), format = "fg", big.mark = ",")
+formatC(sum(budauth$`2019`[budauth$`2019` < 0]), format = "fg", big.mark = ",")
 
 # FY19 Outlays
-formatC(sum(outlays$`2018`[outlays$`2019` > 0]), format = "fg", big.mark = ",")
-formatC(sum(outlays$`2018`[outlays$`2019` < 0]), format = "fg", big.mark = ",")
+formatC(sum(outlays$`2019`[outlays$`2019` > 0]), format = "fg", big.mark = ",")
+formatC(sum(outlays$`2019`[outlays$`2019` < 0]), format = "fg", big.mark = ",")
 
 # n_agency
 length(unique(budauth$Agency.Name))
@@ -239,7 +243,7 @@ length(unique(budauth$Agency.Name))
 length(unique(budauth$Bureau.Name))
 
 agencies <- group_by(budauth, Agency.Name) %>%
-  summarize(dol_fy18 = sum(`2018`[`2018` > 0]),
+  summarize(dol_fy18 = sum(`2019`[`2019` > 0]),
             n_bureau = length(unique(Bureau.Name)),
             n_account = length(unique(Account.Code))
             ) %>%
@@ -263,14 +267,14 @@ budget <- rbind(
   data.frame(file = "receipts", receipts[vars], check.names = FALSE)
   )
 
-select(budget, file, as.character(1976:2023)) %>%
+select(budget, file, as.character(1976:2024)) %>%
   gather(key = year, value = dollars, - file) %>%
   group_by(file, year) %>%
   summarize(dollars = sum(dollars)) %>%
   mutate(year = as.integer(year)) %>% 
   ggplot(aes(x = year, y = dollars / 1e9, col = file)) +
-  geom_line(aes(lty = (year <= 2018)), lwd = 2) +
-  geom_vline(xintercept = 2018) +
+  geom_line(aes(lty = (year <= 2019)), lwd = 2) +
+  geom_vline(xintercept = 2019) +
   scale_linetype_manual(values = c("dotted", "solid")) +
   scale_x_continuous(breaks = seq(1880, 2030, 8), limits = c(1976, 2024)) +
   theme(aspect.ratio = 1/2) +
@@ -284,20 +288,20 @@ select(budget, file, as.character(1976:2023)) %>%
 
 ```{r}
 
-bud <- select(budauth, Agency.Name, as.character(1976:2023)) %>%
+bud <- select(budauth, Agency.Name, as.character(1976:2024)) %>%
   gather(key = year, value = dollars, - Agency.Name) %>%
   group_by(Agency.Name, year) %>%
   summarize(dollars = sum(dollars)) %>%
   mutate(year = as.integer(year))
 
-top10 <- filter(bud, year == 2018) %>%
+top10 <- filter(bud, year == 2019) %>%
   arrange(- dollars) %>% # View()
   head()
 
 gg_budget <- filter(bud, Agency.Name %in% top10$Agency.Name) %>%
   ggplot(aes(x = year, y = dollars / 1e9, col = Agency.Name)) +
-  geom_line(aes(lty = (year <= 2018)), lwd = 2) +
-  geom_vline(xintercept = 2018) +
+  geom_line(aes(lty = (year <= 2019)), lwd = 2) +
+  geom_vline(xintercept = 2019) +
   scale_linetype_manual(values = c("dotted", "solid")) +
   scale_x_continuous(breaks = seq(1880, 2030, 8), limits = c(1976, 2024)) +
   theme(aspect.ratio = 1/2) +
@@ -313,15 +317,15 @@ plot(gg_budget)
 
 ```{r man_vs_des}
 
-sp <- select(budauth, BEA.Category, as.character(1976:2023)) %>%
+sp <- select(budauth, BEA.Category, as.character(1976:2024)) %>%
   gather(key = year, value = dollars, - BEA.Category) %>%
   group_by(BEA.Category, year) %>%
   summarize(dollars = sum(dollars[dollars > 0])) %>%
   mutate(year = as.integer(year))
 
 ggplot(sp, aes(x = year, y = dollars / 1e9, col = BEA.Category)) +
-  geom_line(aes(lty = (year <= 2018)), lwd = 2) +
-  geom_vline(xintercept = 2018) +
+  geom_line(aes(lty = (year <= 2019)), lwd = 2) +
+  geom_vline(xintercept = 2019) +
   scale_linetype_manual(values = c("dotted", "solid")) +
   scale_x_continuous(breaks = seq(1880, 2030, 8)) +
   theme(aspect.ratio = 1/2) +
@@ -330,7 +334,7 @@ ggplot(sp, aes(x = year, y = dollars / 1e9, col = BEA.Category)) +
 
 # percentage
 group_by(budauth, BEA.Category, Agency.Name) %>%
-  summarize(dollars = sum(`2018`)) %>%
+  summarize(dollars = sum(`2019`)) %>%
   mutate(dollars = ifelse(is.na(dollars), 0, dollars)) %>%
   spread(BEA.Category, dollars) %>%
   mutate(pct_man = Mandatory / (Mandatory + Discretionary)) %>%
@@ -357,7 +361,7 @@ gg_budget_adj <- inner_join(bud, cpi, by = "year") %>%
   filter(Agency.Name %in% top10$Agency.Name) %>%
   ggplot(aes(x = year, y = dollars / 1e9, col = Agency.Name)) +
   geom_line(lwd = 2) +
-  geom_vline(xintercept = 2018) +
+  geom_vline(xintercept = 2019) +
   scale_x_continuous(breaks = seq(1880, 2030, 8), limits = c(1976, 2024)) +
   theme(aspect.ratio = 1/2) +
   ylab("Billons of Dollars (Adj for Inflation)") +
@@ -378,7 +382,7 @@ gg_gdp <- gdp %>%
   mutate(dollars = gdp * adj) %>%
   ggplot(aes(x = year, y = dollars / 1e9)) +
   geom_line(lwd = 1) +
-  scale_x_continuous(breaks = seq(1880, 2030, 8), limits = c(1976, 2018)) +
+  scale_x_continuous(breaks = seq(1880, 2030, 8), limits = c(1976, 2019)) +
   theme(aspect.ratio = 1/2) +
   ylab("Billons of Dollars (Adj for Inflation)") +
   ggtitle("Gross Domestic Product")
@@ -391,7 +395,7 @@ gg_gdp_pct <- bud %>%
   ggplot(aes(x = year, y = pct_gdp)) +
   geom_line(lwd = 1) +
   # ylim(0, 0.5) +
-  scale_x_continuous(breaks = seq(1880, 2030, 8), limits = c(1976, 2018)) +
+  scale_x_continuous(breaks = seq(1880, 2030, 8), limits = c(1976, 2019)) +
   theme(aspect.ratio = 1/2) +
   ylab("percent of GDP (%)") +
   ggtitle("US Budget")
