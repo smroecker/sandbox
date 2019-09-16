@@ -26,6 +26,9 @@ Most data has a spatial dimension to it. Knowing 'where' the data is coming from
 
 # Example datasets
 
+How you plot your data in R depends on what format it's in. R has several different formats for managing spatial data (e.g. sp vs sf), and different formats are only compatible with certain plotting systems. Thankfully converting between different spatial formats is not difficult.
+
+
 ## maps R package
 
 ```{r example-maps}
@@ -33,8 +36,8 @@ Most data has a spatial dimension to it. Knowing 'where' the data is coming from
 library(maps)
 library(maptools)
 
-map("state")
-map("state", "indiana")
+map(database = "state")
+map(database = "state", region = "indiana")
 
 st <- map("state", fill = TRUE, plot = FALSE)
 st_sp <- map2SpatialPolygons(st, IDs = st$names)
@@ -43,7 +46,7 @@ proj4string(st_sp) <- CRS("+init=epsg:4326")
 
 # data frame
 str(st)
-# S3 object
+# sp object
 str(st_sp, 2)
 
 plot(st_sp)
@@ -52,7 +55,7 @@ plot(st_sp)
 
 
 
-## County Data
+## County Boundaries
 
 ```{r example-county}
 
@@ -61,51 +64,10 @@ library(USAboundaries)
 
 cnty <- us_counties() 
 cnty <- subset(cnty, !state_name %in% c("Alaska", "Hawaii"))
+str(cnty)
 
 vars <- c("statefp", "countyfp")
 plot(cnty[vars])
-
-```
-
-
-
-## Indiana STASTGO2
-
-```{r example-statsgo}
-
-IN <- read_sf(dsn = "D:/geodata/soils/soils_GSMCLIP_mbr_2599033_03/wss_gsmsoil_IN_[2006-07-06]/spatial/gsmsoilmu_a_in.shp", layer = "gsmsoilmu_a_in")
-
-# simplify polygons
-IN <- rmapshaper::ms_simplify(IN)
-
-```
-
-
-
-## KSSL
-
-```{r example-kssl}
-
-library(aqp)
-library(soilDB)
-
-miami <- fetchKSSL("Miami")
-idx <- complete.cases(miami$x, miami$y)
-
-miami_sp <- miami[idx, ]
-coordinates(miami_sp) <- ~ x + y
-proj4string(miami_sp) <- CRS("+init=epsg:4326")
-
-miami_sp <- SpatialPointsDataFrame(
-  coords = coordinates(miami_sp@sp),
-  data   = site(miami_sp),
-  proj4string = CRS(proj4string(miami_sp))
-  )
-miami_sf <- st_as_sf(miami_sp)
-miami_sf <- within(miami_sf, {
-  lon = st_coordinates(miami_sf)[, 1]
-  lat = st_coordinates(miami_sf)[, 2]
-  })
 
 ```
 
@@ -186,6 +148,48 @@ group_by(corn_yield, state_alpha, year) %>%
   # geom_ribbon(data = yld_sum2[yld_sum2$state %in% corn_states, ], aes(x = year, ymin = yield_low2, ymax = yield_max2, col = "NASIS"), alpha = 0.25) +
   # geom_pointrange(data = yld_sum[yld_sum$state %in% corn_states, ], aes(x = 2018, y = yield_med, ymin = yield_low2, ymax = yield_max2, col = source))
 
+```
+
+
+
+## Indiana General Soil Map
+
+```{r example-statsgo}
+
+IN <- read_sf(dsn = "I:/geodata/soils/soils_GSMCLIP_mbr_2599033_03/wss_gsmsoil_IN_[2006-07-06]/spatial/gsmsoilmu_a_in.shp", layer = "gsmsoilmu_a_in")
+
+# simplify polygons
+IN <- rmapshaper::ms_simplify(IN)
+
+```
+
+
+
+## Kellogg Soil Survey Laboratory Data
+
+```{r example-kssl}
+
+library(aqp)
+library(soilDB)
+
+# download lab locations for the Miami soil series
+miami <- fetchKSSL("Miami")
+idx <- complete.cases(miami$x, miami$y)
+miami_sp <- miami[idx, ] # remove sites with missing locations
+
+coordinates(miami_sp) <- ~ x + y
+proj4string(miami_sp) <- CRS("+init=epsg:4326")
+
+miami_sp <- SpatialPointsDataFrame(
+  coords = coordinates(miami_sp@sp),
+  data   = site(miami_sp),
+  proj4string = CRS(proj4string(miami_sp))
+  )
+miami_sf <- st_as_sf(miami_sp)
+miami_sf <- within(miami_sf, {
+  lon = st_coordinates(miami_sf)[, 1]
+  lat = st_coordinates(miami_sf)[, 2]
+  })
 
 ```
 
@@ -195,6 +199,8 @@ group_by(corn_yield, state_alpha, year) %>%
 # Example maps with several R packages
 
 ## [ggplot2](https://ggplot2.tidyverse.org/)
+
+
 
 ```{r ggplot2}
 
