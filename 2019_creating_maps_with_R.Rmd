@@ -34,22 +34,9 @@ How you plot your data in R depends on what format it's in. R has several differ
 ```{r example-maps}
 
 library(maps)
-library(maptools)
 
 map(database = "state")
 map(database = "state", region = "indiana")
-
-st <- map("state", fill = TRUE, plot = FALSE)
-st_sp <- map2SpatialPolygons(st, IDs = st$names)
-st_sp$state <- st$names
-proj4string(st_sp) <- CRS("+init=epsg:4326")
-
-# data frame
-str(st)
-# sp object
-str(st_sp, 2)
-
-plot(st_sp)
 
 ```
 
@@ -59,12 +46,11 @@ plot(st_sp)
 
 ```{r example-county}
 
-library(sf)
 library(USAboundaries)
+library(sf)
 
 cnty <- us_counties() 
 cnty <- subset(cnty, !state_name %in% c("Alaska", "Hawaii"))
-str(cnty)
 
 vars <- c("statefp", "countyfp")
 plot(cnty[vars])
@@ -156,7 +142,7 @@ group_by(corn_yield, state_alpha, year) %>%
 
 ```{r example-statsgo}
 
-IN <- read_sf(dsn = "I:/geodata/soils/soils_GSMCLIP_mbr_2599033_03/wss_gsmsoil_IN_[2006-07-06]/spatial/gsmsoilmu_a_in.shp", layer = "gsmsoilmu_a_in")
+IN <- sf::read_sf(dsn = "D:/geodata/soils/soils_GSMCLIP_mbr_2599033_03/wss_gsmsoil_IN_[2006-07-06]/spatial/gsmsoilmu_a_in.shp", layer = "gsmsoilmu_a_in")
 
 # simplify polygons
 IN <- rmapshaper::ms_simplify(IN)
@@ -174,22 +160,91 @@ library(soilDB)
 
 # download lab locations for the Miami soil series
 miami <- fetchKSSL("Miami")
-idx <- complete.cases(miami$x, miami$y)
-miami_sp <- miami[idx, ] # remove sites with missing locations
+miami <- site(miami)
+miami <- subset(miami, complete.cases(x, y))
+miami <- within(miami, {
+  lon = x
+  lat = y
+  })
+str(miami)
 
-coordinates(miami_sp) <- ~ x + y
-proj4string(miami_sp) <- CRS("+init=epsg:4326")
+```
+
+
+
+# Construct and convert spatial objects
+
+## point objects
+
+```{r sp convert}
+
+# construct
+
+# sp object
+
+library(sp)
 
 miami_sp <- SpatialPointsDataFrame(
-  coords = coordinates(miami_sp@sp),
-  data   = site(miami_sp),
-  proj4string = CRS(proj4string(miami_sp))
+  data   = miami,
+  coords = cbind(miami$lon, miami$lat),
+  proj4string = CRS("+init=epsg:4326")
   )
-miami_sf <- st_as_sf(miami_sp)
-miami_sf <- within(miami_sf, {
-  lon = st_coordinates(miami_sf)[, 1]
-  lat = st_coordinates(miami_sf)[, 2]
-  })
+
+
+#  sf object
+
+library(sf)
+
+miami_sf <- st_as_sf(
+  miami,
+  coords = c("lon", "lat"),
+  crs = 4326
+  )
+
+
+# data structures
+str(miami_sp, 2)
+str(miami_sf)
+
+
+# convert
+
+# miami_sf <- st_as_sf(miami_sp)
+# miami_sp <- as(miami_sf, "Spatial")
+
+```
+
+
+
+## Convert map objects
+
+```{r map convert}
+
+library(maptools)
+
+st <- map("state", fill = TRUE, plot = FALSE)
+
+# convert to sp object
+st_sp <- map2SpatialPolygons(st, IDs = st$names)
+proj4string(st_sp) <- CRS("+init=epsg:4326")
+st_sp$state <- st$names
+
+
+# loads data with ggplot2 package
+st <- ggplot2::map_data("state")
+
+```
+
+
+
+## Convert with broom package
+
+```{r broom}
+
+library(broom)
+
+st_tidy <- tidy(st_sp, region = "state") 
+IN_tidy <- tidy(as(IN, "Spatial"), region = "MUSYM")
 
 ```
 
@@ -200,29 +255,20 @@ miami_sf <- within(miami_sf, {
 
 ## [ggplot2](https://ggplot2.tidyverse.org/)
 
+ggplot2 plots data frames, but can also use sf objects (which are a special case of data frames). It can plot rasters, but only if they are converted to a data frame.
 
 
 ```{r ggplot2}
 
 library(ggplot2)
 
-# loads data from maps package
-st <- map_data("state")
-
-# tidy example data
-st_tidy <- broom::tidy(st_sp, region = "state") 
-IN_tidy <- broom::tidy(as(IN, "Spatial"), region = "MUSYM")
-
-dim(st_sp)
-dim(st)
-
 
 # Lines
 ggplot() +
-  geom_point(data = miami_sf, aes(x = lon, y = lat)) +
+  geom_point(data = miami, aes(x = lon, y = lat)) +
   geom_path(data = st, aes(x = long, y = lat, group = group)) +
-  xlim(range(miami_sf$lon)) +
-  ylim(range(miami_sf$lat)) +
+  xlim(range(miami$lon)) +
+  ylim(range(miami$lat)) +
   ggtitle("Location of Miami Lab Pedons")
 
 
@@ -235,7 +281,7 @@ ggplot() +
 
 
 
-# sf package
+# sf objects
 
 # Polygons
 ggplot() +
@@ -247,7 +293,7 @@ ggplot() +
 
 # Facets
 
-test <- cnty_corn[cnty_corn$year %in% 2012:2017, ]
+test <- subset(cnty_corn, year %in% 2012:2017)
 
 ggplot() +
   geom_sf(data = test, aes(fill = Value, lty = NA)) +
@@ -262,11 +308,13 @@ ggplot() +
 
 ## [ggmap](https://github.com/dkahle/ggmap)
 
+ggmap expands ggplot2 to download and plot base maps.
+
 ```{r ggmap}
 
 library(ggmap)
 
-# get ggmap
+# build bound box and get base map via ggmap
 bb <- sf::st_bbox(IN)
 bb <- make_bbox(lon = bb[c(3, 1)], lat = bb[c(2, 4)])
 gmap <- get_map(bb, maptype = "terrain", source = "osm")
@@ -286,6 +334,8 @@ ggmap(gmap) +
 
 ## [tmap](https://github.com/mtennekes/tmap)
 
+The "t" in tmap stands for thematic, but tmap can also plot rasters natively. tmap's syntax is very similar to ggplot2, but with a few twists.
+
 ```{r tmap}
 
 library(tmap)
@@ -301,7 +351,6 @@ tmap_mode("view")
 
 tm_basemap("OpenStreetMap") +
   tm_shape(IN) + tm_borders()
-
 
 ```
 
