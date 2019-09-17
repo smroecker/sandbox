@@ -62,36 +62,41 @@ plot(cnty[vars])
 ## USDA-NASS Corn Yield Data
 https://github.com/potterzot/rnassqs
 
-```{r example-nass}
+```{r example-nass, eval=FALSE}
 
-# devtools::install_github('potterzot/rnassqs')
-# library(rnassqs)
+devtools::install_github('potterzot/rnassqs')
 
-# source("C:/Users/steph/Nextcloud/code/api_keys.R")
+library(rnassqs)
+
+source("C:/Users/steph/Nextcloud/code/api_keys.R")
 
 data(state)
 st <- state.abb
 
-# corn_us <- lapply(st, function(x) {
-#   cat("getting", x, as.character(Sys.time()), "\n")
-#   tryCatch({
-#     corn = nassqs_yield(
-#       list("commodity_desc"="CORN", 
-#            "agg_level_desc"="COUNTY", 
-#            "state_alpha"=x
-#            ),
-#       key = nass_key
-#       )}, 
-#     error = function(err) {
-#       print(paste("Error occured:  ",err))
-#       return(NULL)
-#       }
-#     )
-#   })
-# corn_us <- do.call("rbind", corn_us)
-# 
-# save(corn_us, file = "C:/workspace2/corn_us.RData")
-# write.csv(corn_us, file = "nass_corn_us.csv", row.names = FALSE)
+corn_us <- lapply(st, function(x) {
+  cat("getting", x, as.character(Sys.time()), "\n")
+  tryCatch({
+    corn = nassqs_yield(
+      list("commodity_desc"="CORN",
+           "agg_level_desc"="COUNTY",
+           "state_alpha"=x
+           ),
+      key = nass_key
+      )},
+    error = function(err) {
+      print(paste("Error occured:  ",err))
+      return(NULL)
+      }
+    )
+  })
+corn_us <- do.call("rbind", corn_us)
+
+save(corn_us, file = "C:/workspace2/corn_us.RData")
+write.csv(corn_us, file = "nass_corn_us.csv", row.names = FALSE)
+
+```
+
+```{r yield2}
 
 load(file = "C:/Users/Stephen.Roecker/Nextcloud/data/corn_us.RData")
 corn_yield <- subset(corn_us, short_desc == "CORN, GRAIN - YIELD, MEASURED IN BU / ACRE")
@@ -166,7 +171,7 @@ miami <- within(miami, {
   lon = x
   lat = y
   })
-str(miami)
+head(miami)
 
 ```
 
@@ -209,8 +214,8 @@ str(miami_sf)
 
 # convert
 
-# miami_sf <- st_as_sf(miami_sp)
-# miami_sp <- as(miami_sf, "Spatial")
+miami_sf <- st_as_sf(miami_sp)
+miami_sp <- as(miami_sf, "Spatial")
 
 ```
 
