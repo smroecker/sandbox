@@ -1,0 +1,856 @@
+---
+title: MLRA Analysis
+author: Stephen Roecker
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, echo=FALSE)
+
+library(soilDB)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+library(maps)
+library(maptools)
+library(raster)
+library(rgdal)
+library(sf)
+library(sp)
+library(tmap)
+
+```
+
+
+# Load geodata
+
+```{r mlra}
+
+ssa         <- read_sf(dsn = "D:/geodata/soils/SSURGO_CONUS_FY19.gdb", layer = "SAPOLYGON")
+mlra        <- read_sf(dsn = "C:/geodata/soils/mlra_a_mbr_aea.shp", layer = "mlra_a_mbr_aea")
+mlra_v2     <- read_sf(dsn = "D:/geodata/project_data/ah296/mlra_a_mbr_aea_edited_2.gdb", layer = "mlra_a_mbr")
+
+mlrassoarea <- read_sf(dsn = "C:/geodata/soils/MLRA_Soil_Survey_Areas_July2018.shp", layer = "MLRA_Soil_Survey_Areas_July2018")
+mlrassoarea <- subset(mlrassoarea, NEW_MO %in% c("10", "11"))
+mlrasso     <- read_sf(dsn = "D:/geodata/soils/MLRA_Soil_Survey_Offices_Dec2015.shp", layer = "MLRA_Soil_Survey_Offices_Dec2015")
+mlrasso     <- subset(mlrasso, NEW_MO %in% c("10", "11"))
+
+
+# intersect list of mlrassoarea and mlra
+
+mlra_r1011 <- st_intersection(mlra, mlrassoarea)
+
+mlra_l <- {
+  subset(mlrassoarea, NEW_MO %in% c("10", "11")) ->.;
+  split(., .$NEW_SSAID) ->.;
+  lapply(., function(x) {
+    cat("intersecting", unique(x$NEW_SSAID), "\n")
+    idx  = st_intersects(x, mlra)
+    mlra = mlra[unlist(idx), ]
+    })
+  }
+
+st <- map2SpatialLines(map("state", plot = FALSE))
+proj4string(st) <- CRS("+init=epsg:4326")
+st <- spTransform(st, CRS("+init=epsg:5070"))
+
+mlra_r1011 <- mutate(mlra_r1011,
+                   `MLRA & LRU`  = MLRARSYM,
+                   MLRA = unlist(sapply(MLRARSYM, function(x) strsplit(x, "[A-Z]")[1])),
+                   acres = as.numeric(st_area(mlra_r1011) * 0.00247)
+                   ) %>%
+  filter(acres > 1000)
+
+
+# save f and mu
+save(mlra_l, mlra_r1011, file = "C:/Users/Stephen.Roecker/Nextcloud/projects/2019_ah296/data_geodata.RData")
+
+```
+
+
+
+# Map MLRA (tmap)
+
+```{r map mlra}
+tm_lru <- tm_shape(mlra_r11) + 
+  tm_fill(col = "MLRA & LRU") +
+  tm_shape(mlrassoarea) + tm_borders(col = "black", lwd = 0.1, lty = "dotted") +
+  tm_shape(st) + tm_lines(col = "black",  lwd = 2) +
+  tm_shape(mlrasso) + tm_markers(text = "SSA_ID", size = 0.2) +
+  tm_legend(
+    legend.outside = TRUE, 
+    legend.outside.position = c("right", "top")
+    ) +
+  # tm_layout(main.title = "Region 11 MLRAs & LRUs") +
+  tm_add_legend(type = "line", labels = c("States", "MLRA SS Office Areas"), 
+                col = "black", lwd = c(3, 1), lty = c("solid", "dotted")) +
+  tm_grid(projection = "longlat")
+tmap_save(tm_lru, 
+          filename = "C:/Users/Stephen.Roecker/Nextcloud/projects/ah296/lru_region11_tmap.png", 
+          width = 8, units = "in", dpi = 200
+          )
+
+tm_mlra <- tm_shape(mlra_r11) + 
+  tm_fill(col = "MLRA", palette = "Paired") +
+  tm_shape(mlrassoarea) + tm_borders(col = "black", lwd = 0.1, lty = "dotted") +
+  tm_shape(st) + tm_lines(col = "black",  lwd = 2) +
+  tm_shape(mlrasso) + tm_markers(text = "SSA_ID", size = 0.2) +
+  tm_legend(
+    legend.outside = TRUE, 
+    legend.outside.position = c("right", "top")
+    ) +
+  # tm_layout(main.title = "Region 11 MLRAs & LRUs") +
+  tm_add_legend(type = "line", labels = c("States", "MLRA SS Office Areas"), 
+                col = "black", lwd = c(3, 1), lty = c("solid", "dotted")) +
+  tm_grid(projection = "longlat")
+tmap_save(tm_mlra, 
+          filename = "C:/Users/Stephen.Roecker/Nextcloud/projects/ah296/mlra_region11_tmap.png", 
+          width = 8, units = "in", dpi = 200
+          )
+
+```
+
+
+
+# Count MLRAs
+
+```{r}
+
+mlra2 <- mlra[c("LRRSYM", "MLRARSYM")]
+mlra2 <- within(mlra2, {
+  LRUSYM   = MLRARSYM
+  # strip letters from MLRARSYM
+  MLRARSYM = unlist(sapply(LRUSYM, function(x) strsplit(x, "[A-Z]")[1]))
+  letter   = grepl("[A-Z]", LRUSYM)
+  })
+mlra2$geometry <- NULL
+mlra2 <- mlra2[!duplicated(mlra2$LRUSYM), ]
+
+
+# land resource region
+mlra3 <- group_by(mlra2, LRRSYM) %>%
+  summarize(n_mlra = length(MLRARSYM),
+            n_lru  = length(LRUSYM),
+            n_letters = sum(letter)
+            )
+ggplot(mlra3, aes(y = n_mlra, x = n_letters)) + 
+  geom_text(aes(label = LRRSYM)) +
+  ggtitle("Land Resourcs Regions")
+
+
+# letter counts
+mlra_t  <- with(mlra2, table(LRRSYM, letter))
+mlra_df <- as.data.frame(mlra_t, stringsAsFactor = FALSE)
+mlra_df$LRRSYM <- with(mlra_df, reorder(LRRSYM, Freq, function(x) sum(x) * -1))
+ggplot(mlra_df, aes(x = LRRSYM, y = Freq, fill = letter)) + 
+  ylab("n_mlra with letters") +
+  geom_bar(stat = "identity") +
+  ggtitle("Land Resourcs Regions")
+
+# letter proportions
+mlra_pt <- prop.table(mlra_t, 1) 
+mlra_df <- as.data.frame(mlra_pt, stringsAsFactore = FALSE)
+mlra_df$LRRSYM <- with(mlra_df[mlra_df$letter == TRUE, ], reorder(LRRSYM, Freq, function(x) max(x) * -1))
+ggplot(mlra_df, aes(x = LRRSYM, y = Freq, fill = letter)) + 
+  geom_bar(stat = "identity", position = "fill") +
+  ylab("Proportion") +
+  ggtitle("Land Resourcs Regions")
+
+# n_mlra without letters in lru
+mlra4 <- mlra2[! duplicated(mlra2$MLRARSYM), ]
+mlra4 <- as.data.frame(with(mlra4, table(LRRSYM, MLRARSYM)), stringsAsFactors = FALSE)
+mlra4$LRRSYM <- with(mlra4, reorder(LRRSYM, Freq, function(x) sum(x) * -1))
+ggplot(mlra4, aes(x = LRRSYM, y = Freq)) + 
+  ylab("n_mlra without letters") +
+  geom_bar(stat = "identity") +
+  ggtitle("Land Resourcs Regions")
+
+```
+
+
+
+# Load soil data
+
+```{r fetch}
+
+# fetch components and map units
+
+state <- paste0(c("IA", "IL", "IN", "KY", "KS", "MI", "MO", "MN", "MT", "NE", "ND", "SD", "OH", "OK", "WI"), collapse = "|")
+
+ssa  <- read_sf(dsn = "I:/geodata/soils/SSURGO_CONUS_FY19.gdb", layer = "SAPOLYGON")
+ssa2 <- as.data.frame(ssa) %>%
+  arrange(AREASYMBOL) %>%
+  filter(!duplicated(AREASYMBOL) & grepl(state, AREASYMBOL)) %>%
+  mutate(st = substr(AREASYMBOL, 1, 2)
+         ) %>%
+  group_by(st) %>%
+  mutate(rank = as.integer(1:length(st) / length(st) * 100),
+         samp = as.numeric(cut(rank, c(0, 20, 40, 60, 80, 100))),
+         samp = paste0(st, "_", samp)
+         ) %>%
+  ungroup()
+
+
+test <- {
+  split(ssa2, ssa2$samp) ->.;
+  lapply(., function(x) {
+    cat("fetching", unique(x$samp), as.character(Sys.time()), "\n")
+    as = unique(x$AREASYMBOL)
+    f  = fetchSDA_component(WHERE = paste0("areasymbol IN ('", paste0(as, collapse = "', '"), "')"))
+    natmusym = unique(site(f)$nationalmusym)
+    mu = get_mapunit_from_SDA(WHERE = paste0("nationalmusym IN ('", paste0(natmusym, collapse = "', '"), "')"))
+    return(list(f = f, mu = mu))
+  })}
+
+# combine lists
+h  <- do.call("rbind", lapply(test, function(x) horizons(x$f)))
+s  <- do.call("rbind", lapply(test, function(x) site(x$f)))
+mu <- do.call("rbind", lapply(test, function(x) x$mu))
+
+# remove fetch duplicates
+idx <- !duplicated(with(h, paste0(cokey, hzname, hzdept_r, sep = "_")))
+h   <- h[idx, ]
+idx <- !duplicated(with(s, paste0(nationalmusym, cokey, sep = "_")))
+s  <- s[idx, ]
+idx <- !duplicated(mu$nationalmusym)
+mu  <- mu[idx, ]
+
+f <- h
+depths(f) <- cokey ~ hzdept_r + hzdepb_r
+site(f) <- s
+
+# save f and mu
+save(samp, f, mu, file = "C:/Users/Stephen.Roecker/Nextcloud/projects/2019_ah296/data_sda.RData")
+
+```
+
+
+
+# Aggregate soil data
+
+```{r tidy}
+
+load(file = "C:/Users/Stephen.Roecker/Nextcloud/projects/2019_ah296/data_sda.RData")
+
+h <- horizons(f)
+h$fragvol_r[is.na(h$fragvol_r)] <- 0
+s <- site(f)
+s$cokey <- as.integer(s$cokey)
+
+
+# summarize components
+# filter(nationalmusym %in% mu[grepl("^IN", mu$areasymbol), "nationalmusym"]) %>%
+var <- c("nationalmusym", "cokey", "taxgrtgroup", "taxsubgrp")
+h2 <- inner_join(h, s[var], by = "cokey") %>%
+  mutate(loess = grepl("^sil$|^sicl$", texture) & !grepl("O", hzname) & (fragvol_r <= 2 | is.na(fragvol_r)),
+         densic = grepl("d", hzname) | dbthirdbar_r >= 1.75 & !(grepl("x|r|R", hzname) | grepl("Fragi", taxgrtgroup)),
+         fragipan = grepl("x", hzname) & !grepl("Fragic", taxsubgrp),
+         hzthk_r  = hzdepb_r - hzdept_r,
+         oc_r     = ifelse(grepl("A|H1", hzname), om_r * 1.9, om_r * 1.724),
+         oc_thk   = ifelse(hzdepb_r <= 25, hzdepb_r - hzdept_r, NA),
+         oc_thk   = ifelse(hzdept_r <  25 & hzdepb_r > 25, 25 - hzdept_r, oc_thk),
+         clay_50  = ifelse(hzdepb_r <= 50, hzdepb_r - hzdept_r, NA),
+         clay_50  = ifelse(hzdept_r <  50 & hzdepb_r > 50, 50 - hzdept_r, clay_50),
+         clay_100  = ifelse(hzdepb_r <= 100, hzdepb_r - hzdept_r, NA),
+         clay_100  = ifelse(hzdept_r <  100 & hzdepb_r > 100, 100 - hzdept_r, clay_100),
+         mollic   = grepl("olls$", taxgrtgroup) & grepl("A|H1", hzname),
+         bedrock  = grepl("R|r", hzname) | texture %in% c("br", "wb", "uwb"),
+         fragvol_r   = ifelse(is.na(fragvol_r), 0, fragvol_r),
+         fragvol_cor = 1 - fragvol_r / 100
+         )  %>%
+  group_by(cokey) %>%
+  summarize(
+    clay_50_wa   = weighted.mean(claytotal_r[clay_50  > 0], w = clay_50[clay_50   > 0],  na.rm = TRUE),
+    clay_100_wa  = weighted.mean(claytotal_r[clay_100 >0],  w = clay_100[clay_100 > 0], na.rm = TRUE),
+    awc_cm       = sum(awc_r * hzthk_r, na.rm = TRUE),
+    loess_thk    = min(hzdepb_r[loess], na.rm = TRUE),
+    mollic_a_thk = min(hzdepb_r[mollic], na.rm = TRUE),
+    # oc of upper 25cm
+    oc_gcm3      = sum(oc_r    * fragvol_cor * dbthirdbar_r * oc_thk * 0.1, na.rm = TRUE), 
+    caco3_gcm3   = sum(caco3_r * fragvol_cor * dbthirdbar_r * hzthk_r * 0.1, na.rm = TRUE),
+    caco3_dep    = min(hzdept_r[caco3_r >= 5], na.rm = TRUE),
+    caco3_avg    = weighted.mean(caco3_r[caco3_r >= 5], 
+                                 # weights = thickness
+                                 ifelse(is.na(hzdepb_r[caco3_r >= 5]), 
+                                        hzdept_r[caco3_r >= 5] + 1, 
+                                        hzdepb_r[caco3_r >= 5]
+                                        ) - hzdept_r[caco3_r >= 5],
+                                 na.rm = TRUE
+                                 ),
+    densic_dep   = min(hzdept_r[densic], na.rm = TRUE),
+    fragipan_dep = min(hzdept_r[fragipan], na.rm = TRUE),
+    fragipan_thk = max(hzdepb_r[fragipan], na.rm = TRUE) - min(hzdept_r[fragipan], na.rm = TRUE),
+    bedrock_dep  = min(hzdept_r[bedrock], na.rm = TRUE)
+  ) %>%
+  mutate(
+    loess_thk    = ifelse(is.infinite(loess_thk),    0, loess_thk),
+    mollic_a_thk = ifelse(is.infinite(mollic_a_thk), 0, mollic_a_thk)
+    )
+idx <- 10:ncol(h2)
+h2[idx] <- lapply(h2[idx], function(x) {
+  test = ifelse(is.infinite(x), 250, x)
+  return(test)
+  })
+summary(h2)
+
+hist(h2$caco3_gcm3)
+
+
+# summarize map units
+vars <- c("nationalmusym", "pct_component")
+mu2  <- inner_join(mu[vars], s, by = "nationalmusym") %>%
+  inner_join(h2, by = "cokey") %>%
+  mutate(comppct_r = ifelse(pct_component < 100 | pct_component > 100, (comppct_r / pct_component) * 100, comppct_r)
+         ) %>%
+  group_by(nationalmusym) %>%
+  summarize(taxpartsize_dc  = ifelse(all(is.na(taxpartsize)), "NA", names(sort(xtabs(~ taxpartsize), decreasing = TRUE)[1])),
+            taxsuborder_dc  = ifelse(all(is.na(taxsuborder)), "NA", names(sort(xtabs(~ taxsuborder), decreasing = TRUE)[1])),
+            pmkind_dc       = ifelse(all(is.na(pmkind)),      "NA", names(sort(table(pmkind), decreasing = TRUE)[1])),
+            awc_cm_ws       = sum(awc_cm     * comppct_r / 100, na.rm = TRUE),
+            mollic_a_thk_wa = round(weighted.mean(mollic_a_thk, comppct_r, na.rm = TRUE)),
+            oc_gcm3_ws      = sum(oc_gcm3    * comppct_r / 100, na.rm = TRUE),
+            caco3_gcm3_ws   = sum(caco3_gcm3 * comppct_r / 100, na.rm = TRUE),
+            clay_50_wa      = round(weighted.mean(clay_50_wa,   comppct_r, na.rm = TRUE)),
+            clay_100_wa     = round(weighted.mean(clay_100_wa,  comppct_r, na.rm = TRUE)),
+            loess_thk_wa    = round(weighted.mean(loess_thk,    comppct_r, na.rm = TRUE)),
+            caco3_dep_wa    = round(weighted.mean(caco3_dep,    comppct_r, na.rm = TRUE)),
+            caco3_avg_wa    = round(weighted.mean(caco3_avg,    comppct_r, na.rm = TRUE)),
+            densic_dep_wa   = round(weighted.mean(densic_dep,   comppct_r, na.rm = TRUE)),
+            fragipan_dep_wa = round(weighted.mean(fragipan_dep, comppct_r, na.rm = TRUE)),
+            fragipan_thk_wa = round(weighted.mean(fragipan_thk, comppct_r, na.rm = TRUE)),
+            bedrock_dep_wa  = round(weighted.mean(bedrock_dep,  comppct_r, na.rm = TRUE))
+            ) %>%
+  left_join(mu[c("nationalmusym", "farmlndcl", "pct_hydric", "pct_component", "n_component", "n_majcompflag")], by = "nationalmusym") %>%
+  as.data.frame()
+summary(mu2)
+
+
+# get nationalmusym
+nm <- {
+  split(ssa2, ssa2$st) ->.;
+  lapply(., function(x) {
+    cat(unique(x$st), as.character(Sys.time()), "\n")
+    # x = paste0("areasymbol LIKE '", paste0(unique(x$st), "%"), "'")
+    get_mapunit_from_SDA(WHERE = paste0("areasymbol LIKE '", paste0(unique(x$st), "%'")))
+  }) ->.;
+  do.call("rbind", .)
+}
+
+
+# merge with ggsurgo rat
+mu2$mukey <- NULL
+ma <- merge(nm[c("nationalmusym", "mukey")], mu2, by = "nationalmusym", all.x = TRUE)
+ma <- merge(ma, samp, by = "mukey", all.x = TRUE)
+
+
+# save tidy datasets
+foreign::write.dbf(mu2, "D:/geodata/project_data/ah296/data_sda_aggregated.dbf")
+save(h2, mu2, ma, nm, file = "C:/Users/Stephen.Roecker/Nextcloud/projects/2019_ah296/data_sda_aggregated.RData")
+
+```
+
+
+
+
+# Extract spatial data
+
+```{r spatial}
+
+# load geodata
+dir <- "D:/geodata/project_data/11REGION/"
+climate <- stack(c(
+  ppt  = paste0(dir, "prism800m_11R_ppt_1981_2010_annual_mm.tif"),
+  tmean = paste0(dir, "prism800m_11R_tmean_1981_2010_annual_C.tif")
+))
+# ssurgo   <- raster("C:/geodata/soils/gssurgo_r1011_fy19_800m.tif")
+dir  <- "C:/geodata/soils/gssurgo_r1011_fy19_100m_"
+vars <- c("clay_50_wa", "clay_100_wa", "caco3_gcm3_ws", "awc_cm_ws", "oc_gcm3_ws", "loess_thk_wa", "densic_dep_wa", "fragipan_dep_wa", "bedrock_dep_wa", "pct_hydric", "taxsuborder_dc", "taxpartsize_dc")
+files <- paste0(dir, vars, ".tif")
+ssurgo_p <- raster::stack(files)
+
+
+# construct sample grid
+
+# mlra_sym <- paste0("^", c(52, "53A", "53B", 55:57, 88, 90:95, 98:99, 102:115),  collapse = "|")
+mlra_sym <- paste0("^", gsub("[A-Z]", "", mlra_r1011$MLRARSYM), collapse = "|") 
+
+mlra_c <- subset(mlra, grepl(mlra_sym, MLRARSYM))
+mlra_p <- subset(mlra_v2, grepl(mlra_sym, MLRARSYM))
+test <- st_intersection(mlra_c, mlra_p)
+test$area <- st_area(test) * 0.000247
+
+set.seed(123)
+samp_pts <- spsample(as(test, "Spatial"), n = 2e6, type = "regular")
+samp_pts <- SpatialPointsDataFrame(coordinates(samp_pts), data.frame(id = 1:length(samp_pts)))
+proj4string(samp_pts) <- st_crs(ssa)$proj4string
+
+
+# sample ssa, mlra, and mlrassoarea
+samp_ssa         <- over(samp_pts, as(ssa, "Spatial"))
+# samp_mlra        <- over(samp_pts, as(mlra, "Spatial"))
+samp_mlra        <- over(samp_pts, as(test, "Spatial"))
+samp_mlrassoarea <- over(samp_pts, as(mlrassoarea, "Spatial"))
+samp_climate     <- as.data.frame(raster::extract(climate, samp_pts, sp = TRUE))
+# samp_ssurgo      <- as.data.frame(extract(ssurgo, samp_pts, sp = TRUE))
+# names(samp_ssurgo)[2] <- "mukey"
+samp_ssurgo      <- as.data.frame(raster::extract(ssurgo_p, samp_pts, sp = TRUE))
+
+
+# combine samples
+samp <- cbind(samp_ssa, samp_mlra, samp_mlrassoarea, samp_climate, samp_ssurgo)
+names(samp) <- gsub("gssurgo_r1011_fy19_100m_", "", names(samp))
+idx <- duplicated(names(samp))
+samp[idx] <- NULL
+# samp <- merge(samp, samp_ssurgo[c("id", "mukey")], by = "id", all.x = TRUE)
+
+
+# Export samples
+samp_sp <- samp
+coordinates(samp_sp) <- ~ x1 + x2
+proj4string(samp_sp) <- CRS("+init=epsg:5070")
+samp_sf <- st_as_sf(samp_sp)
+write_sf(samp_sf, dsn = "I:/geodata/project_data/ah296/samp_mlra.shp", layer = "samp_mlra", driver = "ESRI Shapefile")
+
+write.csv(samp, file = "I:/geodata/project_data/ah296/samp_mlra.csv", row.names = TRUE)
+
+save(samp, file = "C:/Users/Stephen.Roecker/Nextcloud/projects/2019_ah296/data_geodata_samp.RData")
+
+```
+
+
+
+
+# Create soil grids
+
+```{r}
+
+library(raster)
+library(rgdal)
+library(sf)
+library(maps)
+library(maptools)
+library(rmapshaper)
+
+
+load(file = "C:/Users/Stephen.Roecker/Nextcloud/projects/ah296/data_geodata.RData")
+load(file = "C:/Users/Stephen.Roecker/Nextcloud/projects/ah296/data_sda_aggregated.RData")
+
+mu2 <- within(mu2, {
+  taxsuborder_dc = as.factor(taxsuborder_dc)
+  taxpartsize_dc = as.factor(taxpartsize_dc)
+})
+
+# lines
+mlra <- read_sf(dsn = "C:/geodata/soils/mlra_a_mbr_aea.shp", layer = "mlra_a_mbr_aea")
+mlra <- st_transform(mlra, "+proj=longlat +datum=WGS84")
+mlra <- subset(mlra, MLRARSYM %in% unique(do.call("rbind", mlra_l)$MLRARSYM))
+mlra2 <- rmapshaper::ms_simplify(mlra, keep = 0.5)
+st <- map2SpatialLines(map("state", plot = FALSE))
+proj4string(st) <- CRS("+init=epsg:4326")
+st <- spTransform(st, CRS("+init=epsg:5070"))
+
+mlra2_lab <- st_point_on_surface(mlra2)
+
+mlra3 <- read_sf(dsn = "I:/geodata/project_data/ah296/mlra_a_mbr_aea_edited_2.gdb", layer = "mlra_a_mbr")
+mlra3 <- st_transform(mlra3, "+proj=longlat +datum=WGS84")
+idx  <- {
+  lapply(names(mlra_l), function(x) {
+    cbind(mlrassorea = x, mlra_l[[x]])
+    }) ->.;
+  do.call("rbind", .) ->.;
+  .$MLRA <- gsub("[A-Z]", "", .$MLRARSYM);
+  sort(unique(.$MLRA)) ->.;
+  }
+mlra3$MLRA <- gsub("[A-Z]", "", mlra3$MLRARSYM)
+mlra3 <- subset(mlra3, MLRA %in% idx)
+r11_mlra <- c("95|104|107|108|109|110|111|112|113|114|115")
+mlra3$MLRA <- ifelse(grepl(r11_mlra, mlra3$MLRARSYM), 
+                     gsub("[A-E]", "", mlra3$MLRARSYM), 
+                     mlra3$MLRARSYM
+                     )
+mlra3 <- ms_simplify(mlra3, keep = 0.5)
+mlra3 <- ms_dissolve(mlra3, field = "MLRA") 
+mlra3 <- ms_explode(mlra3) 
+
+mlra3_lab <- st_point_on_surface(mlra3)
+
+
+# ratify
+r <- raster("C:/geodata/soils/gssurgo_r1011_fy19_100m.tif")
+r_rat <- ratify(r)
+
+rat <- levels(r_rat)[[1]]
+ma2 <- merge(mu2, nm[c("nationalmusym", "mukey")], by = "nationalmusym", all.x = TRUE)
+rat_mu2 <- merge(rat, ma2, by.x = "ID", by.y = "mukey", all.x = TRUE)
+
+data(metadata)
+
+rat_mu2 <- within(rat_mu2, {
+  taxsuborder_dc = factor(taxsuborder_dc, levels = metadata[metadata$ColumnPhysicalName == "taxsuborder", "ChoiceLabel"])
+  taxpartsize_dc = factor(taxpartsize_dc, levels = metadata[metadata$ColumnPhysicalName == "taxpartsize", "ChoiceLabel"])
+  })
+
+levels(r_rat) <- rat_mu2
+
+vars <- c("clay_50_wa", "clay_100_wa", "caco3_gcm3_ws", "awc_cm_ws", "oc_gcm3_ws", "loess_thk_wa", "densic_dep_wa", "fragipan_dep_wa", "bedrock_dep_wa", "pct_hydric", "taxsuborder_dc", "taxpartsize_dc")
+lapply(vars, function(x) {
+  cat(x, as.character(Sys.time()), "\n")
+  deratify(r_rat, att = x, 
+           filename = paste0("C:/geodata/soils/gssurgo_r1011_fy19_100m_", x,".tif"),
+           progress = "text", overwrite = TRUE,
+           datatype = ifelse(! x %in% c("taxsuborder_dc", "taxpartsize_dc"), "FLT4S", "INT4S")
+           )
+  })
+
+
+lapply(vars[11:12], function(x) {
+  cat(x, as.character(Sys.time()), "\n")
+  gdalwarp(
+    srcfile = paste0("C:/geodata/soils/gssurgo_r1011_fy19_100m_", x,".tif"),
+    dstfile = paste0("C:/geodata/soils/gssurgo_r1011_fy19_800m_", x,".tif"),
+    r = ifelse(!x %in% c("taxsuborder_dc", "taxpartsize_dc"), "average", "mode"),
+    tr = c(800, 800),
+    ot = ifelse(! x %in% c("taxsuborder_dc", "taxpartsize_dc"), "Float32", "Int32"),
+    verbose   = TRUE,
+    overwrite = TRUE
+    )})
+
+```
+
+
+
+
+# Create ridge plots
+
+```{r plot}
+
+library(dplyr)
+library(ggplot2)
+libary(tidyr)
+library(ggridges)
+
+load(file = "C:/Users/Stephen.Roecker/Nextcloud/mlra_analysis1.RData")
+load(file = "C:/Users/Stephen.Roecker/Nextcloud/mlra_analysis2.RData")
+
+# mutate(ma, mlra = sapply(MLRARSYM, function(x) strsplit(substr(MLRARSYM, 1, 3)) %>%
+sso <- "11-FIN"
+
+# gg_mlra_ridge <- ma %>%
+#   filter(NEW_MO == "11") %>%
+#   mutate(MLRA = unlist(sapply(as.character(MLRARSYM), function(x) strsplit(x, "[A-Z]")[1]))) %>%
+#   filter(MLRARSYM %in% mlra_l[[sso]]$MLRARSYM) %>%
+gg_mlra_ridge <- samp %>%
+  mutate(MLRARSYM = ifelse(MLRARSYM == MLRARSYM.1, MLRARSYM, paste0(MLRARSYM, "_", MLRARSYM.1)),
+         MLRARSYM = sapply(MLRARSYM, function(x) {
+           paste(sort(unlist(strsplit(x, "_"))), collapse = "_")
+           })
+         ) %>%
+  filter(MLRARSYM %in% c("98", "111A", "111B", "111B_98", "111C")) %>%
+  dplyr::select(ppt, tmean, clay_50_wa, awc_cm_ws, oc_gcm3_ws, loess_thk_wa, caco3_gcm3_ws, densic_dep_wa, MLRARSYM) %>%
+  mutate(awc_cm_ws     = ifelse(awc_cm_ws     < quantile(awc_cm_ws, 0.95, na.rm = TRUE), NA, awc_cm_ws),
+         oc_gcm3_ws    = ifelse(oc_gcm3_ws    < quantile(oc_gcm3_ws, 0.95, na.rm = TRUE), NA, oc_gcm3_ws),
+         caco3_gcm3_ws = ifelse(caco3_gcm3_ws < quantile(caco3_gcm3_ws, 0.95, na.rm = TRUE), NA, caco3_gcm3_ws)
+         # loess_thk_wa  = ifelse(loess_thk_wa  > quantile(loess_thk_wa, 0.99, na.rm = TRUE), NA, loess_thk_wa)
+         ) %>%
+  gather(key = "variable", value = "value", - MLRARSYM) %>%
+  filter(!is.na(MLRARSYM)) %>%
+  ggplot(aes(x = value, y = MLRARSYM)) +
+  geom_density_ridges() +
+  ylab("MLRA & LRU") +
+  facet_wrap(~ variable, scales = "free_x") +
+  # coord_flip() +
+  #theme(aspect = 1) +
+  ggtitle("Differentiating MLRA with SSURGO Properties for 11-FIN")
+ggsave(gg_mlra_ridge, filename = "C:/Users/Stephen.Roecker/Nextcloud/projects/ah296/mlra_analysis_ridges.png", width = 8, height = 6, units = "in", dpi = 200)
+
+```
+
+
+
+
+# Create Web Map
+
+```{r map}
+
+library(raster)
+library(sf)
+library(mapview)
+library(rmapshaper)
+library(RColorBrewer)
+library(tmap)
+library(viridis)
+library(leaflet)
+
+
+# raster
+
+vars <- c("clay_50_wa", "clay_100_wa", "caco3_gcm3_ws", "awc_cm_ws", "oc_gcm3_ws", "loess_thk_wa", "densic_dep_wa", "fragipan_dep_wa", "bedrock_dep_wa", "pct_hydric", "taxsuborder_dc", "taxpartsize_dc")
+gssurgo_r <- lapply(paste0("C:/geodata/soils/gssurgo_r1011_fy19_800m_", vars,".tif"), function(x) {
+  temp = raster(x)
+  # temp = readAll(temp)
+})
+names(gssurgo_r) <- vars
+
+
+
+# leaflet
+
+brks <- lapply(vars, function(x) {
+  cat("generating intervals for", x, "\n")
+  list(var  = x,
+       brks = round(classInt::classIntervals(var = values(gssurgo_r[[x]]), n = 7, style = "kmeans")$brks)
+  )})
+names(brks) <- vars
+
+idx <- - c(11:12)
+pal <- lapply(brks[idx], function(x) {
+  bin = unique(x$brks[idx])
+  len = length(unique(bin))
+  if (! x$var %in% vars[7:9]) {
+    pal = rev(viridis(len))
+  } else pal = viridis(len)
+  colorBin(
+      palette = pal,
+      bins = bin,
+      na.color = "transparent"
+      )
+  })
+names(pal) <- vars[idx]
+
+idx <- c(11:12)
+pal2 <- lapply(vars[idx], function(x) {
+  temp = as.factor(mu2[[x]])
+  colorFactor(
+      palette = if (x == "taxsuborder_dc") {
+        colorRampPalette(brewer.pal(12, "Paired"))(43)
+        } else colorRampPalette(brewer.pal(12, "Paired"))(41),
+      levels = if (x == "taxsuborder_dc") {
+        1:43
+        } else 1:41,
+      na.color = "transparent"
+      )
+  })
+names(pal2) <- vars[idx]
+
+pal <- c(pal, pal2)
+
+
+test <- leaflet() %>% 
+  setView(lng = -96, lat = 42, zoom = 05) %>%
+  addEasyButton(easyButton(
+     icon="fa-globe", title="Zoom to Level 8",
+     onClick = JS("function(btn, map){ map.setZoom(8);}"))) %>%
+  addTiles(group = "OSM (default)") %>%
+  addProviderTiles("Esri.WorldImagery", group = "Imagery") %>%
+ addProviderTiles("Esri.WorldShadedRelief", group = "ShadedRelief") %>%
+  # taxsuborder
+  addRasterImage(gssurgo_r$taxsuborder_dc, group = "taxsuborder", color = pal$taxsuborder_dc, method = "ngb") %>%
+  # # # addLegend(pal = pal$taxsuborder_dc, values = factor(values(gssurgo_r$taxsuborder_dc), levels = 1:43, labels = levels(mu2$taxsuborder_dc)[1:43]), title = "Taxonomic Suborder", group = "taxsuborder", opacity = 1) %>%
+  # taxpartsize
+  addRasterImage(gssurgo_r$taxpartsize_dc, group = "taxpartsize", color = pal$taxpartsize_dc, method = "ngb") %>%
+  # clay % upper 50-cm
+  addRasterImage(gssurgo_r$clay_50_wa, group = "clay", color = pal$clay_50_wa) %>%
+  addLegend(pal = pal$clay_50_wa, values = values(gssurgo_r$clay_50_wa), title = "Clay Content (%) in the Upper 50-cm", group = "clay", opacity = 1) %>%
+  # AWC
+  addRasterImage(gssurgo_r$awc_cm_ws, group = "AWS", color = pal$awc_cm_ws) %>%
+  addLegend(pal = pal$awc_cm_ws, values = values(gssurgo_r$awc_cm_ws), title = "Available Water Storage (cm)", group = "AWS", opacity = 1) %>%
+  # OC
+  addRasterImage(gssurgo_r$oc_gcm3_ws, group = "OC",  color = pal$oc_gcm3_ws) %>%
+  addLegend(pal = pal$oc_gcm3_ws, values = values(gssurgo_r$oc_gcm3_ws), title = "Organic Carbon (gcm3) in the upper 25-cm", group = "OC", opacity = 1) %>%
+  # CaCO3
+  addRasterImage(gssurgo_r$caco3_gcm3_ws, group = "CaCO3",  color = pal$caco3_gcm3_ws) %>%
+  addLegend(pal = pal$caco3_gcm3_ws, values = values(gssurgo_r$caco3_gcm3_ws), title = "Calcium Carbonate (gcm3) in the Subsoil", group = "CaCO3", opacity = 1) %>%
+  # Loess
+  addRasterImage(gssurgo_r$loess_thk_wa, group = "Loess",  color = pal$loess_thk_wa) %>%
+  addLegend(pal = pal$loess_thk_wa, values = values(gssurgo_r$loess_thk_wa), title = "Loess Thickness (cm)", group = "Loess", opacity = 1) %>%
+  # Densic
+  addRasterImage(gssurgo_r$densic_dep_wa, group = "Densic",  color = pal$densic_dep_wa) %>%
+  addLegend(pal = pal$densic_dep_wa, values = values(gssurgo_r$densic_dep_wa), title = "Densic Depth (cm)", group = "Densic", opacity = 1) %>%
+  # Fragipan
+  addRasterImage(gssurgo_r$fragipan_dep_wa, group = "Fragipan",  color = pal$fragipan_dep_wa) %>%
+  addLegend(pal = pal$fragipan_dep_wa, values = values(gssurgo_r$fragipan_dep_wa), title = "Fragipan Depth (cm)", group = "Fragipan", opacity = 1) %>%
+  # Bedrock
+  addRasterImage(gssurgo_r$bedrock_dep_wa, group = "Bedrock",  color = pal$bedrock_dep_wa) %>%
+  addLegend(pal = pal$bedrock_dep_wa, values = values(gssurgo_r$bedrock_dep_wa), title = "Bedrock Depth (cm)", group = "Bedrock", opacity = 1) %>%
+  # Hydric Soils
+  addRasterImage(gssurgo_r$pct_hydric, group = "Hydric Soils",  color = pal$pct_hydric) %>%
+  addLegend(pal = pal$pct_hydric, values = values(gssurgo_r$pct_hydric), title = "Hydric Soils (%)", group = "Hydric Soils", opacity = 1) %>%
+  # MLRA (Current)
+  addPolygons(data = mlra2, group = "Current MLRA lines", color = grey(0.3), fill = FALSE, weight = 4) %>%
+  # Labels
+  addMarkers(data = mlra2_lab, label = ~htmltools::htmlEscape(MLRARSYM), labelOptions = labelOptions(noHide = T), group = "Current MLRA labels") %>% #label = labels, labelOptions(noHide = TRUE)) %>%
+  # MLRA (Proposed)
+  addPolygons(data = mlra3, group = "Proposed MLRA lines", color = "black", fill = FALSE, weight = 4) %>%
+  # Labels (Proposed)
+  addMarkers(data = mlra3_lab, label = ~htmltools::htmlEscape(MLRA), labelOptions = labelOptions(noHide = T), group = "Proposed MLRA labels") %>% #label = labels, labelOptions(noHide = TRUE)) %>%
+  # Controls
+  addLayersControl(
+    baseGroups = c("OSM (default", "Imagery", "ShadedRelief"),
+    overlayGroups = c("taxsuborder", "taxpartsize", "clay", "AWS", "OC", "CaCO3", "Loess", "Densic", "Fragipan", "Bedrock", "Hydric Soils", "Proposed MLRA lines", "Proposed MLRA labels", "Current MLRA lines", "Current MLRA labels"),
+    position = "topleft"
+    ) %>%
+  hideGroup(c("taxsuborder", "taxpartsize", "AWS", "OC", "CaCO3", "Loess", "Densic", "Fragipan", "Bedrock", "Hydric Soils", "Proposed MLRA labels", "Current MLRA labels")) %>%
+  addScaleBar(position = "bottomleft")
+
+htmlwidgets::saveWidget(test, file = "C:/workspace2/github/soil-pit/trunk/sandbox/stephen/test.html", selfcontained = FALSE)
+# renderLeaflet(test, )
+
+```
+
+
+
+
+# Draft map comparisons
+
+```{r mapview}
+
+# mapview
+
+cols <- rev(viridis::viridis_pal()(7))
+
+test2 <- mapview(gssurgo_r$awc_cm_ws, at = brks$awc_cm_ws$brks, col.regions = cols, layer.name = "Availalbe Water Storage (cm)", alpha.regions = 1, maxpixels =  6449636) +
+  # OC
+  mapview(gssurgo_r$oc_gcm3_ws, at = brks$oc_gcm3_ws$brks, col.regions = cols, layer.name = "Organic Carbon (gcm3) upper 25-cm", alpha.regions = 1, maxpixels =  6449636) +
+  # CaCo3
+  mapview(gssurgo_r$caco3_gcm3_ws, at = brks$caco3_gcm3_ws$brks, col.regions = cols, layer.name = "Calicum Carbonates (gcm3)", alpha.regions = 1, maxpixels =  6449636) +
+  # Loess
+  mapview(gssurgo_r$loess_thk_wa, at = brks$loess_thk_wa$brks, col.regions = cols, layer.name = "Loess Thickness (cm)", alpha.regions = 1, maxpixels =  6449636) +
+  # Densic
+  mapview(gssurgo_r$densic_dep_wa, at = brks$densic_dep_wa$brks, col.regions = rev(cols), layer.name = "Densic Depth (cm)", alpha.regions = 1, maxpixels =  6449636) +
+  # Fragpipan
+  mapview(gssurgo_r$fragipan_dep_wa, at = brks$fragipan_dep_wa$brks, col.regions = rev(cols), layer.name = "Fragipan Depth (cm)", alpha.regions = 1, maxpixels =  6449636) +
+  # Bedrock
+  mapview(gssurgo_r$bedrock_dep_wa, at = brks$bedrock_dep_wa$brks, col.regions = rev(cols), layer.name = "Bedrock Depth (cm)", alpha.regions = 1, maxpixels =  6449636) +
+  # Hydric Soils
+  mapview(gssurgo_r$pct_hydric, at = brks$pct_hydric$brks, col.regions = cols, layer.name = "Hydric Soils (%)", alpha.regions = 1, maxpixels =  6449636) +
+  # MLRA Lines
+  mapview(mlra2, type = "l", color = "black", lwd = 3, alpha.regions = 0, layer.name = "MLRA lines") +
+  # States
+  mapview(st, type = "l", color = "black", lwd = 1, lty = 2, layer.name = "States")
+
+mapshot(test, url = "C:/workspace2/github/soil-pit/trunk/sandbox/stephen/test2.html", selfcontained = FALSE)
+
+```
+
+```{r tmap}
+
+# tmap
+
+mlra_gssurgo_tmap <- tm_shape(gssurgo_r) + 
+  tm_raster(
+    breaks = brks,
+    palette = rev(viridis_pal()(7))
+    ) +
+  tm_shape(mlra) + tm_borders(col = "red", lwd = 2) +
+  tm_shape(st) + tm_lines(col = "black",  lwd = 2, group = "test") +
+  tm_legend(
+    legend.outside = TRUE, 
+    legend.outside.position = c("right", "top")
+    ) +
+  tm_layout(
+    main.title = paste("gSSURGO AWC (cm)") #, var) #, 
+    ) +
+  tm_add_legend(type = "line", labels = "MLRA and LRUs", col = "red", lwd = 2) +
+  tm_add_legend(type = "line", labels = "States", col = "black", lwd = 3)
+  # tm_grid(labels.inside.frame = FALSE)
+tmap_save(mlra_gssurgo_tmap, filename = paste0("C:/Users/Stephen.Roecker/Nextcloud/code/mlra_gssurgo_", var, "_tmap.png"), width = 8, units = "in", dpi = 200)
+
+```
+
+
+```{r base}
+
+# base
+png(file = "C:/Users/Stephen.Roecker/Nextcloud/code/mlra_caco3_plot.png", type = "cairo", width = 8, height = 6, units = "in", res = 200, pointsize = 15)
+plot(gssurgo_r,
+     breaks = brks,
+     col = rev(viridis_pal()(7)),
+     main = "SSURGO CaCO3 (%) in the Subsoil"
+     )
+lines(mlra)
+lines(st)
+dev.off()
+
+```
+
+
+```{r rasterVis}
+
+# rasterVis
+library(rasterVis)
+
+png(file = "C:/Users/Stephen.Roecker/Nextcloud/code/mlra_caco3_spplot.png", type = "cairo", width = 8, height = 6, units = "in", res = 200, pointsize = 15)
+spplot(gssurgo_r,
+       maxpixels = 5e5,
+       main = "SSURGO CaCO3 (%) in the Subsoil",
+       colorkey = list(
+         at = brks,
+         col = rev(viridis_pal()(7)),
+         labels = list(at = brks, labels = brks)
+         )
+       ) + 
+  latticeExtra::layer(sp.lines(mlra, col = "orange", lwd = 3)) +
+  latticeExtra::layer(sp.lines(st, col = "black", lwd = 2))
+dev.off()
+
+```
+
+```{r ggplot2}
+
+# ggplot2
+library(ggplot2)
+
+gssurgo_r <- projectRaster(gssurgo_r, crs = "+init=epsg:4326")
+bb <- bbox(gssurgo_r)
+
+mlra <- spTransform(mlra, CRS("+init=epsg:4326"))
+mlra <- broom::tidy(mlra)
+st2 <- map_data("state")
+
+gg_mlra_map <- gplot(gssurgo_r, maxpixel = 5e6) + 
+  geom_tile(aes(fill = value)) +
+  labs(fill = "CaCO3 (%)") +
+  scale_fill_viridis(na.value = "transparent") +
+  geom_polygon(data = st2,  aes(x = long, y = lat, group = group), fill = NA, col = "black", lwd = 1) +
+  geom_polygon(data = mlra, aes(x = long, y = lat, group = group), fill = NA, col = "orange", lwd = 0.8) +
+  coord_cartesian(xlim = bb[c(1, 3)], ylim = bb[c(2, 4)]) +
+  ggtitle("SSURGO CaCO3 (%) in the Subsoil")
+ggsave(gg_mlra_map, filename = "C:/Users/Stephen.Roecker/Nextcloud/code/mlra_caco3_gg.png", width = 8, units = "in", dpi = 200)
+
+```
+
+```{r tmap}
+
+# tmap
+library(tmap)
+
+mlra_gssurgo_tmap <- tm_shape(gssurgo_r) + 
+  tm_raster(
+    breaks = brks,
+    palette = rev(viridis_pal()(7))
+    ) +
+  tm_shape(mlra) + tm_borders(col = "red", lwd = 2) +
+  tm_shape(st) + tm_lines(col = "black",  lwd = 2, group = "test") +
+  tm_legend(
+    legend.outside = TRUE, 
+    legend.outside.position = c("right", "top")
+    ) +
+  tm_layout(
+    main.title = paste("gSSURGO AWC (cm)") #, var) #, 
+    ) +
+  tm_add_legend(type = "line", labels = "MLRA and LRUs", col = "red", lwd = 2) +
+  tm_add_legend(type = "line", labels = "States", col = "black", lwd = 3)
+  # tm_grid(labels.inside.frame = FALSE)
+tmap_save(mlra_gssurgo_tmap, filename = paste0("C:/Users/Stephen.Roecker/Nextcloud/code/mlra_gssurgo_", var, "_tmap.png"), width = 8, units = "in", dpi = 200)
+
+```

@@ -1,0 +1,758 @@
+---
+title: "Generating raster interpretations with digital soil maps: an example with the soil vulnerability index (SVI) in the Dillon and Hall Creek Watersheds"
+author: "Stephen Roecker"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, cache=TRUE, eval=FALSE)
+```
+
+
+# Introduction
+
+Digital soil maps (DSM) open up the possibility of generating new raster-based interpretations (RBI) with more spatially explicit soil information. Recently Libohova et al. (2018) generated a DSM of soil hydraulic conductivity (Ksat) and several other soil properties for the Dillon and Hall Creek Watersheds in Southern Indiana. This dataset represents an opportunity to test the development of RBIs. One interpretation that currently has drawn significant interest by USDA-NRCS is the soil vulnerability index (SVI)(USDA-NRCS, 2012; Chan et al., 2017) which is excepted to be incorporated into the Conservation Assessment and Ranking Tool (CART). The SVI is a simple interpretation that uses slope, hydrologic soil groups (which incorporate Ksat, water table depth, and restriction depth) and the K-factor to rank soils potential for runoff or leaching of contaminants.
+
+
+![SVI Criteria](C:/workspace2/github/ncss-tech/soil-pit/trunk/sandbox/stephen/svi_criteria.png)
+
+For comparison the SVI interp was calculated from a combination of 3 sources: SSURGO, SSURGO + DEM, and a SoLIM + SSURGO + DEM.
+
+
+
+# Methods
+
+```{r load-pkgs, eval=TRUE}
+
+library(soilDB)
+library(dplyr)
+library(ggplot2)
+library(gdalUtils)
+library(raster)
+library(sf)
+library(tmap)
+library(velox)
+
+pp <- "M:/geodata/project_data/Indiana_DSM_Project"
+setwd(pp)
+
+```
+
+
+
+## Study
+
+The study area of the original DSM project (Libohova et al., 2019) was limited to the Dillon and Hall Creek Watersheds within Dubois and Orange County, Indiana. For the sake of the SSURGO and SSURGO + DEM comparison the study area was expanded to the entire Dubios and Orange counties.
+
+
+## Import vector-based SSURGO data
+
+The SSURGO tabular data was accessed from Soil Data Access (SDA) and joined to the spatial data (i.e. MUPOLYGON layer) accessed from Web Soil Survey (WSS).
+
+```{r load-sda, drop=TRUE}
+
+co <- fetchSDA_component(WHERE = "areasymbol IN ('IN037', 'IN117')", duplicates = TRUE)
+
+vars <- c("nationalmusym", "mukey", "cokey", "compname", "comppct_r", "slope_r", "hydgrp")
+s <- aqp:: site(co)[vars]
+
+vars <- c("cokey", "hzdept_r", "kwfact")
+h <- aqp::horizons(co)[vars]
+h2 <- subset(h, hzdept_r < 1)
+
+
+# component soil moisture (i.e. water table)
+cosm <- get_cosoilmoist_from_SDA(WHERE = "areasymbol IN ('IN037', 'IN117')")
+
+# calculate minimum water table depth
+mu_wt <- cosm %>% 
+  filter(status == "Wet") %>%
+  group_by(nationalmusym, compname, comppct_r) %>%
+  summarize(wetdept_r = min(dept_r, na.rm = TRUE)) %>%
+  group_by(nationalmusym) %>%
+  summarize(wetdept_r = round(weighted.mean(wetdept_r, w = comppct_r, na.rm = TRUE)))
+
+```
+
+
+
+## DEM geoprocressing
+
+The elevation data utilized for this study was the 10-meter USGS - National Elevation Dataset (NED), which for this portion of Indiana was originally resampled from LiDAR. The slope gradient layer was calculated using GDAL (Horn, 1981).
+
+```{r}
+
+gdal_translate(
+  src_dataset = "M:/geodata/elevation/ned/ned_30m_conus_slope.tif",
+  dst_dataset = "ned_30m_hcr_slope.tif",
+  projwin     = c(st_bbox(mupol_svi)[c(1, 4, 3, 2)]),
+  of          = "GTiff",
+  overwrite   = TRUE
+  )
+
+```
+
+
+
+## Calculate SVI from SSURGO
+
+To calculate the SVI from SSURGO, the soil component information was used, and then aggregated to the map unit level.
+
+```{r svi-ssurgo, eval=FALSE}
+
+# component svi ratings
+co_svi <- merge(s, h2, by = "cokey", all.x = TRUE)
+co_svi <- within(co_svi, {
+  hydgrp = as.character(hydgrp)
+  hydgrp = sapply(hydgrp, function(x) {
+    if (grepl("/", x)) {
+      strsplit(x, "/")[[1]][2]
+      } else x})
+  svi = NA
+  # low
+  svi = ifelse(
+    (hydgrp == "A") |
+    (hydgrp == "B" & slope_r < 4) | 
+    (hydgrp == "C" & slope_r < 2) | 
+    (hydgrp == "D" & slope_r < 2 & kwfact < 0.28), 
+    "low", svi
+    )
+  # moderate
+  svi = ifelse(
+    (hydgrp == "B" & (slope_r >= 4 & slope_r <= 6) & kwfact <  0.32) |
+    (hydgrp == "C" & (slope_r >= 2 & slope_r <= 6) & kwfact <  0.28) |
+    (hydgrp == "D" &  slope_r <  2                 & kwfact >= 0.28),
+    "moderate", svi
+    )
+  # moderately high
+  svi = ifelse(
+    (hydgrp == "B" & (slope_r >= 4 & slope_r <= 6) & kwfact >= 0.32) |
+    (hydgrp == "C" & (slope_r >= 2 & slope_r <= 6) & kwfact >= 0.28) |
+    (hydgrp == "D" & (slope_r >= 2 & slope_r <= 4)),
+     "moderately high", svi
+    )
+  # high
+  svi = ifelse(
+    (hydgrp == "B" &  slope_r >  6) |
+    (hydgrp == "C" &  slope_r >  6) |
+    (hydgrp == "D" &  slope_r >  4),
+    "high", svi
+    )
+  })
+
+
+# map unit svi ratings 
+mu_svi <- co_svi %>%
+  group_by(nationalmusym, mukey, cokey, svi) %>%
+  summarize(comppct_r = sum(comppct_r, na.rm = TRUE)) %>%
+  group_by(nationalmusym, mukey) %>%
+  summarize(svi = svi[which.max(comppct_r)]) %>%
+  mutate(svi = factor(svi, levels = c("low", "moderate", "moderately high", "high")),
+         svi_num = as.numeric(svi),
+         MUKEY = as.character(mukey)
+         )
+mu_prop <- co_svi %>%
+  group_by(nationalmusym, mukey) %>%
+  summarize(kwfact  = Hmisc::wtd.quantile(kwfact, weights = comppct_r, probs = 0.5),
+            slope_r = Hmisc::wtd.quantile(slope_r, weights = comppct_r, probs = 0.5),
+            hydgrp = hydgrp[which.max(comppct_r)]
+            ) %>%
+  within(., {
+    hydgrp = factor(hydgrp)
+    hydgrp_num = as.numeric(hydgrp)
+    })
+
+mu_svi <- left_join(mu_svi, mu_prop, by = c("nationalmusym", "mukey"))
+mu_svi$mukey <- NULL
+mu_svi <- left_join(mu_svi, mu_wt, by = "nationalmusym") %>%
+  arrange(MUKEY)
+
+# View(dplyr::select(mu_svi, wetdept_r, MUKEY))
+
+
+# import ssurgo mupolygon 
+# mupol <- read_sf(dsn = "M:/geodata/soils/SSURGO_R11_FY19.gdb", layer = "MUPOLYGON", query = "SELECT * FROM MUPOLYGON WHERE AREASYMBOL IN ('IN037', 'IN117')")
+# mupol <- rmapshaper::ms_simplify(mupol, 0.5)
+# write_sf(mupol, dsn = "mupolygon.shp", layer = "mupolygon", delete_layer = TRUE)
+mupol <- read_sf(dsn = "mupolygon.shp", layer = "mupolygon")
+
+mupol_svi <- merge(mupol, mu_svi, by = "MUKEY", all.x = TRUE)
+
+
+# create shapefile
+write_sf(mupol_svi, dsn = "mupolygon_svi.shp", layer = "mupolygon_svi", delete_layer = TRUE)
+
+```
+
+
+
+## Calculate SVI from SSURGO + DEM
+
+To calculate the SVI from SSURGO and the DEM, the necessary SSURGO data was rasterized, and then combined with the slope gradient using using raster algebra.
+
+```{r svi-rasters}
+
+mupol_svi <- read_sf(dsn = "mupolygon_svi.shp", layer = "mupolygon_svi")
+slope_r <- raster("ned_30m_hcr_slope.tif")
+
+
+# rasterize ssurgo properties
+# svi
+vx_svi <- velox(slope_r)$copy()
+vx_svi$rasterize(mupol_svi, field = "svi_num")
+vx_svi$write(path = "ssurgo_svi_num_30m.tif", overwrite = TRUE)
+# kwfact
+vx_svi <- velox(slope_r)$copy()
+vx_svi$rasterize(mupol_svi, field = "kwfact")
+vx_svi$write(path = "ssurgo_kwfact_30m.tif", overwrite = TRUE)
+# hydgrp
+vx_svi <- velox(slope_r)$copy()
+vx_svi$rasterize(mupol_svi, field = "hydgrp_")
+vx_svi$write(path = "ssurgo_hydgrp_num_30m.tif", overwrite = TRUE)
+
+
+vars <- c("ssurgo_hydgrp_num_30m.tif", "ned_30m_hcr_slope.tif", "ssurgo_kwfact_30m.tif")
+rs <- stack(vars)  
+
+
+# calculate svi with map algebra
+ssurgo_svi_slope <- calc(rs, fun = function(x) {
+  
+  svi = NA
+  # low
+  svi = ifelse(
+    (x[1] == 1) |
+      (x[1] == 2 & x[2] < 4) | 
+      (x[1] == 3 & x[2] < 2) | 
+      (x[1] == 4 & x[2] < 2 & x[3] < 0.28), 
+    1, svi
+  )
+  # moderate
+  svi = ifelse(
+    (x[1] == 2 & (x[2] >= 4 & x[2] <= 6) & x[3] <  0.32) |
+      (x[1] == 3 & (x[2] >= 2 & x[2] <= 6) & x[3] <  0.28) |
+      (x[1] == 4 &  x[2] <  2                 & x[3] >= 0.28),
+    2, svi
+  )
+  # moderately high
+  svi = ifelse(
+    (x[1] == 2 & (x[2] >= 4 & x[2] <= 6) & x[3] >= 0.32) |
+      (x[1] == 3 & (x[2] >= 2 & x[2] <= 6) & x[3] >= 0.28) |
+      (x[1] == 4 & (x[2] >= 2 & x[2] <= 4)),
+    3, svi
+  )
+  # high
+  svi = ifelse(
+    (x[1] == 2 &  x[2] >  6) |
+      (x[1] == 3 &  x[2] >  6) |
+      (x[1] == 4 &  x[2] >  4),
+    4, svi
+  )
+},
+filename = "ssurgo_svi_num_slope_30m.tif",
+datatype = "INT1U",
+progress = "text",
+overwrite = TRUE
+)
+
+```
+
+
+
+## Calculate SVI from SoLIM + SSURGO + DEM
+
+To calculate the SVI from the DSMs produced by Libohova et al. (2018), it was first necessary to compute the hydrologic soil groups (HSG). This was accomplished by classifying the SolIM Ksat and paralithic layers with the SSURGO water table depths using raster algebra. Since the Ksat layers did not correspond to the depth intervals specificed in the HSG criteria, it was assumed that the minimum of the first 2 Ksat was comparable to those listed in the HSG criteria. For comparison purposes the SoLIM layers were resampled to 10-meters using the nearest neighborhood method.
+
+```{r solum-rasterize}
+
+# load DSM rasters
+path <- file.path(pp, "HUC12_Hall_Creek/SoLIM/Draft3")
+
+# harden solim classes
+solim_r <- raster(file.path(path, "hcr_d3_s/w001001.adf"))
+
+# ksat layers
+ksat_rs <- stack(paste0(path, "/hcr_ksat_l", 1:3, "/w001001.adf"))
+ksat_rs <- calc(ksat_rs, fun = function(x) {
+  # convert to micrometers / sec
+  x * 2.778
+  }, 
+  progress = "text"
+  )
+
+# restrictive layer
+rl_r <- raster(paste0(path, "/d3ssrvparl/w001001.adf"))
+
+dsm_rs <- stack(solim_r, ksat_rs, rl_r)
+names(dsm_rs) <- c("classes", "ksat_l1", "ksat_l2", "ksat_l3", "rl_r")
+dsm_rs <- projectRaster(dsm_rs, crs = sp::CRS("+init=epsg:5070"), progress = "text")
+
+
+# rasterize ssurgo properties
+# water table depth
+vx_wt <- velox(dsm_rs[[1]])$copy()
+vx_wt$rasterize(mupol_svi, field = "wetdept_r")
+wt_r <- vx_wt$as.RasterLayer()
+wt_r <- calc(wt_r, fun = function(x) {
+  x[is.na(x)] = 200
+  return(x)
+  })
+writeRaster(wt_r, filename = "mupol_wt.tif", overwrite = TRUE)
+
+ksat_min_60 <- calc(dsm_rs[[2:3]], fun = function(x) min(x, na.rm = TRUE), progress = "text")
+ksat_min_100 <- calc(dsm_rs[[2:4]], fun = function(x) min(x, na.rm = TRUE), progress = "text")
+
+dsm_rs <- stack(dsm_rs, wt_r, ksat_min_60, ksat_min_100)
+names(dsm_rs)[6:8] <- c("wt_r", "ksat_min_60", "ksat_min_100") 
+
+save(dsm_rs, file = "dsm_rs.RData")
+
+```
+
+
+```{r solim-hsg}
+
+load(file = "dsm_rs.RData")
+
+# calculate HSG
+
+hsg_r <- calc(dsm_rs, fun = function(x) {
+  
+  ksat_min_60  = x[7]
+  ksat_min_100 = x[8]
+  rl           = x[5]
+  wt           = x[6]
+  
+  hsg = NA
+  
+  # impermeable layer < 50-cm
+  # D
+  hsg[rl < 50] = 4
+  
+  # impermeable layer 50-100-cm
+  # water table < 60-cm
+  # A/D
+  hsg[(rl > 50 | rl <= 100) &
+       wt  < 60             &
+       ksat_min_60 >  40] = 5
+  # B/D
+  hsg[(rl > 50 | rl <= 100) &
+       wt  < 60             &
+       (ksat_min_60 <= 40 & ksat_min_60 > 10)] = 6
+  # C/D
+  hsg[(rl > 50 | rl <= 100) &
+       wt  < 60             &
+       (ksat_min_60 <= 10 & ksat_min_60 > 1)] = 7
+  # D
+  hsg[(rl > 50 | rl <= 100) &
+       wt  < 60             &
+       ksat_min_60 <= 1] = 4
+  
+  # water table >= 60-cm
+  # A
+  hsg[(rl > 50 | rl <= 100) &
+       wt >= 60             &
+       ksat_min_60 >  40] = 1
+  # B
+  hsg[(rl > 50 | rl <= 100) &
+       wt >= 60             &
+       (ksat_min_60 <= 40 & ksat_min_60 > 10)] = 2
+  # C
+  hsg[(rl > 50 | rl <= 100) &
+       wt >= 60             &
+       (ksat_min_60 <= 10 & ksat_min_60 > 1)] = 3
+   # D
+  hsg[(rl > 50 | rl <= 100) &
+       wt >= 60             &
+       ksat_min_60 <= 1] = 4
+  
+  # impermeable layer > 100-cm or NA
+  # water table < 60-cm
+  # A/D
+  hsg[(rl > 100 | is.na(rl)) &
+       wt   < 60                 &
+       ksat_min_100 >  10] = 5
+  # B/D
+  hsg[(rl > 100 | is.na(rl)) &
+       wt   < 60                 &
+      (ksat_min_100 <= 10 & ksat_min_100 > 4)] = 6
+  # C/D
+  hsg[(rl > 100 | is.na(rl)) &
+       wt < 60                   &
+      (ksat_min_100 <= 4  & ksat_min_100 > 0.4)] = 7
+  # D
+  hsg[(rl > 100 | is.na(rl)) &
+       wt < 60                   &
+      ksat_min_100 <= 0.4] = 4
+  
+  # water table 60-100-cm
+  # A
+  hsg[(rl > 100 | is.na(rl)) &
+      (wt >= 60 | wt < 100)      &
+       ksat_min_60 >  40] = 1
+  # B
+  hsg[(rl > 100 | is.na(rl)) &
+      (wt >= 60 | wt < 100)  &
+      (ksat_min_60 <= 40 & ksat_min_60 > 10)] = 2
+  # C
+  hsg[(rl > 100 | is.na(rl)) &
+      (wt >= 60 | wt < 100)  &
+      (ksat_min_60 <= 10 & ksat_min_60 > 1)] = 3
+  # D
+  hsg[(rl > 100 | is.na(rl)) &
+      (wt >= 60 | wt < 100)  &
+       ksat_min_60 <= 1] = 4
+
+  # water table 60-100-cm
+  # A
+  hsg[(rl > 100 | is.na(rl)) &
+      wt  > 100              &
+      ksat_min_100 >  10] = 1
+  # B
+  hsg[(rl > 100 | is.na(rl)) &
+      wt  > 100              &
+     (ksat_min_100 <= 10 & ksat_min_100 > 4)] = 2
+  # C
+  hsg[(rl > 100 | is.na(rl)) &
+      wt  > 100              &
+     (ksat_min_100 <= 4  & ksat_min_100 > 0.4)] = 3
+  # D
+  hsg[(rl > 100 | is.na(rl)) &
+      wt  > 100              &
+      ksat_min_100 <= 0.4] = 4
+
+  return(hsg)
+  
+  },
+  filename = "solim_hsg_num.tif",
+  datatype = "INT1U",
+  progress = "text",
+  overwrite = TRUE
+  )
+
+
+test = calc(dsm_rs, fun = function(x) {
+  
+  rl = x[5]
+  wt = x[6]
+  test = NA
+  
+  test[(rl >= 50 | rl < 100) & wt >= 60] = 1
+  
+  return(test)
+  
+  })
+
+```
+
+```{r solim-svi}
+
+vars <- c("solim_hsg_num.tif", "ned_10m_hcr_slope.tif", "mupol_kwfact.tif")
+hsg_r <- raster(vars[1])
+rs <- stack(vars[2:3])
+rs <- crop(rs, hsg_r)
+rs <- resample(rs, hsg_r, method = "ngb")
+rs <- stack(hsg_r, rs)
+
+# calculate svi with map algebra
+solim_svi_r <- calc(rs, fun = function(x) {
+  
+  svi = NA
+  # low
+  svi = ifelse(
+    (x[1] == 1) |
+      (x[1] == 2 & x[2] < 4) | 
+      (x[1] == 3 & x[2] < 2) | 
+      (x[1] == 4 & x[2] < 2 & x[3] < 0.28), 
+    1, svi
+  )
+  # moderate
+  svi = ifelse(
+    (x[1] == 2 & (x[2] >= 4 & x[2] <= 6) & x[3] <  0.32) |
+      (x[1] == 3 & (x[2] >= 2 & x[2] <= 6) & x[3] <  0.28) |
+      (x[1] == 4 &  x[2] <  2                 & x[3] >= 0.28),
+    2, svi
+  )
+  # moderately high
+  svi = ifelse(
+    (x[1] == 2 & (x[2] >= 4 & x[2] <= 6) & x[3] >= 0.32) |
+      (x[1] == 3 & (x[2] >= 2 & x[2] <= 6) & x[3] >= 0.28) |
+      (x[1] == 4 & (x[2] >= 2 & x[2] <= 4)),
+    3, svi
+  )
+  # high
+  svi = ifelse(
+    (x[1] == 2 &  x[2] >  6) |
+      (x[1] == 3 &  x[2] >  6) |
+      (x[1] == 4 &  x[2] >  4),
+    4, svi
+  )
+},
+filename = "solim_svi_num_slope.tif",
+datatype = "INT1U",
+progress = "text",
+overwrite = TRUE
+)
+
+```
+
+
+
+# Results & Discussion
+
+## Compare SVI from SSURGO vs SSURGO + DEM
+
+```{r compare-maps, eval=TRUE}
+
+setwd(pp)
+
+# sample ssurgo + dem rasters
+vars <- c("ssurgo_svi_num_slope_10m.tif", "ned_10m_hcr_slope.tif")
+svi_rs   <- stack(vars)
+
+svi_sf <- read_sf("mupolygon_svi.shp") 
+svi_sp <- as(svi_sf, "Spatial")
+
+samp_pts  <- sp::spsample(svi_sp, n = 5000, type = "regular")
+samp_v <- over(samp_pts, svi_sp)
+samp_r <- extract(svi_rs, samp_pts, df = TRUE)
+samp   <- cbind(samp_v, samp_r)
+
+idx    <- which(names(samp) %in% c("svi_num", "ssurgo_svi_num_slope_10m"))
+names(samp)[idx] <- c("ssurgo_svi", "ssurgo_dem_svi")
+
+samp   <- within(samp, {
+  ssurgo_svi = factor(ssurgo_svi, levels = 1:4, labels = c("low", "moderate", "moderately-high", "high"))
+  ssurgo_dem_svi = factor(ssurgo_dem_svi, levels = 1:4, labels = c("low", "moderate", "moderately-high", "high"))
+  })
+
+```
+
+
+```{r ssurgo-results, echo=FALSE, eval=TRUE, results="asis"}
+
+# confusion matrix of ssurgo vs ssurgo + dem
+cm <- round(prop.table(xtabs(~ ssurgo_svi + ssurgo_dem_svi, data = samp)) * 100)
+cm <- caret::confusionMatrix(cm)
+
+tables::toKable(tables::as.tabular(cm$table), format = "html") %>%
+  kableExtra::kable_styling()
+prettyNum(cm$overall, "e", digits = 2)[1:5]
+
+# mosaicplot(table(samp$ssurgo_svi, samp$ssurgo_dem_svi), main = "SVI Comparison of SSURGO vs SSURGO + DEM")
+
+# proportional barplot
+samp %>%
+  dplyr::select(ssurgo_svi, ssurgo_dem_svi) %>% 
+  table() %>% as.data.frame() %>%
+  ggplot(aes(x = ssurgo_svi, y = Freq, fill = ssurgo_dem_svi)) +
+  geom_bar(stat = "identity", position = "fill") + 
+  coord_flip() +
+  ggtitle("SVI Comparison of SSURGO vs SSURGO + DEM")
+
+```
+
+
+The comparison between the SVI calculated from SSURGO vs SSURGO + DEM showed differences in SVI only due to slope gradient for both Dubios and Orange county. Overall the spatial patterns between the 2 maps appear similar, but the contingency table shows that the moderate and moderately-high SVI SSURGO classes have significant overlap with several SSURGO + DEM classes. The disagreement appears to partially coming from inclusions of ridge-tops and channels within moderately steep map units. In addition within northeast corner of Orange County their is an area of complex low relief where the SVI values differs between the data-sets. Given the narrow range of slope thresholds (e.g. 2-4-6%) used by the SVI, small differences in slope gradient can result in different classes. Also areas of complex low relief are known to be problematic when it comes to estimating slope gradient, which can vary depending on the DEM source and derivative algorithms used to calculate it (Roecker and Thompson, 2010). 
+
+
+
+## Compare SVI from SSURGO vs SoLIM + SSURGO + DEM
+
+```{r ssurgo-solim, eval=TRUE}
+
+setwd(pp)
+
+# sample sssurgo and solim rasters
+vars <- c("solim_svi_num_slope.tif", "ssurgo_svi_num_slope_10m.tif") 
+solim_svi_r  <- raster(vars[1])
+ssurgo_svi_r <- raster(vars[2])
+solim_svi_r <- resample(solim_svi_r, ssurgo_svi_r, method = "ngb")
+svi_rs       <- stack(solim_svi_r, ssurgo_svi_r)
+
+svi_sf <- read_sf("mupolygon_svi.shp")
+svi_sp <- as(st_transform(svi_sf, crs = "+init=epsg:5070"), "Spatial")
+
+hcr_sf <- read_sf(file.path(pp, "HUC12_Hall_Creek/watershed_30m.shp")) 
+hcr_sf <- st_transform(hcr_sf, crs = "+init=epsg:5070")
+hcr_sp <- as(hcr_sf, "Spatial")
+
+samp_pts  <- sp::spsample(hcr_sp, n = 5000, type = "regular")
+
+# sample
+samp_v <- over(samp_pts, svi_sp)
+samp_r  <- extract(svi_rs, samp_pts, df = TRUE)
+
+samp   <- cbind(samp_v, samp_r)
+idx    <- which(names(samp) %in% c("svi_num", "solim_svi_num_slope", "ssurgo_svi_num_slope_10m"))
+vars <- c("ssurgo_svi", "solim_dem_svi", "ssurgo_dem_svi")
+names(samp)[idx] <- vars
+
+samp <- samp[vars]  
+samp <- within(samp, {
+  ssurgo_svi = factor(ssurgo_svi, levels = 1:4, labels = c("low", "moderate", "moderately-high", "high"))
+  solim_dem_svi = factor(solim_dem_svi, levels = 1:4, labels = c("low", "moderate", "moderately-high", "high"))
+  ssurgo_dem_svi = factor(ssurgo_dem_svi, levels = 1:4, labels = c("low", "moderate", "moderately-high", "high"))
+  })
+
+```
+
+
+```{r solim-results, echo=FALSE, eval=TRUE}
+
+# confusion matrix
+cm <- round(prop.table(xtabs(~ solim_dem_svi + ssurgo_svi, data = samp)) * 100)
+cm <- caret::confusionMatrix(cm)
+
+tables::toKable(tables::as.tabular(cm$table), format = "html") %>%
+  kableExtra::kable_styling()
+prettyNum(cm$overall, "e", digits = 2)[1:5]
+
+# proportional barplot
+samp %>%
+  dplyr::select(ssurgo_svi, solim_dem_svi) %>% 
+  table() %>% as.data.frame() %>%
+  ggplot(aes(x = ssurgo_svi, y = Freq, fill = solim_dem_svi)) +
+  geom_bar(stat = "identity", position = "fill") + 
+  coord_flip() +
+  ggtitle("SVI Comparison of SSURGO vs SoLIM + SSURGO + DEM")
+
+```
+
+The comparison between the SVI calculated from SSURGO vs SoLIM + SSURGO + DEM showed differences in SVI only due to differences in slope and HSG for the Hall Creek watershed. The overall accuracy was the same as the previous comparison, but the their was more overlap for the minor SVI classes. The SSURGO SVI classes low and moderate were classified as high and moderately high respectively by the SoLIM + SSURGO + DEM SVI model. Spatially the disagreement appears to coming from floodplains, where the SSURGO SVI is predominantely classified at moderate, whereas the SoLIM + SSURGO + DEM SVI was classified as low or moderately high. This appears to be due to a shift in the HSG layer that was derived from the SoLIM Ksat DSM.
+
+
+## Compare SVI from SSURGO + DEM vs SoLIM + SSURGO + DEM
+
+```{r solim-results2, echo=FALSE, eval=TRUE}
+
+# confusion matrix
+cm <- round(prop.table(xtabs(~ solim_dem_svi + ssurgo_dem_svi, data = samp)) * 100)
+cm <- caret::confusionMatrix(cm)
+
+tables::toKable(tables::as.tabular(cm$table), format = "html") %>%
+  kableExtra::kable_styling()
+prettyNum(cm$overall, "e", digits = 2)[1:5]
+
+# proportional barplot
+samp %>%
+  dplyr::select(ssurgo_dem_svi, solim_dem_svi) %>% 
+  table() %>% as.data.frame() %>%
+  ggplot(aes(x = ssurgo_dem_svi, y = Freq, fill = solim_dem_svi)) +
+  geom_bar(stat = "identity", position = "fill") + 
+  coord_flip() +
+  ggtitle("SVI Comparison of SSURGO + DEM vs SoLIM + SSURGO + DEM")
+
+```
+
+The comparison between the SVI calculated from SSURGO + DEM vs SoLIM + SSURGO + DEM showed differences in SVI only due to differences in HSG for the Hall Creek watershed. The overall accuracy was quite high, however the moderate SVI classes had no overlap. Spatially the disagreement again appears to coming from floodplains, where the SSURGO + DEM SVI is predominantely classified at moderate, whereas the SoLIM + SSURGO + DEM SVI was classified as low or moderately high. Again, the differance appears to be due to a shift in the HSG layer that was derived from the SoLIM Ksat DSM.
+
+
+## Ksat maps
+
+```{r ksat-maps, eval=TRUE}
+
+setwd(pp)
+load(file = "dsm_rs.RData")
+
+brks <- c(0, 0.1, 1, 3)
+
+tm_shape(dsm_rs[[c(2:4, 8)]]) + 
+  tm_raster(style = "cont",
+            breaks = brks, 
+            palette = viridis::viridis_pal()(length(brks)),
+            title = expression(paste(mu, m, "/", s))
+            ) + 
+  tm_layout(main.title = "Ksat layers", 
+            legend.position = c("left", "bottom"),
+            title = c("Layer 1", "Layer 2", "Layer 3", "Min")
+            )
+
+tm_shape(dsm_rs[[c(2:4, 8)]]) + 
+  tm_raster(breaks = c(0.01, 0.1, 1, 10, 100), 
+            palette = viridis::viridis_pal()(4),
+            title = expression(paste(mu, m, "/", s))
+            ) + 
+  tm_layout(main.title = "Ksat layers", 
+            legend.position = c("left", "bottom"),
+            title = c("Layer 1", "Layer 2", "Layer 3", "Min")
+            )
+
+```
+
+
+
+## SVI maps
+
+```{r svi-maps, echo=FALSE, eval=TRUE}
+
+setwd(pp)
+
+hcr_sf <- read_sf(file.path(pp, "HUC12_Hall_Creek/watershed_30m.shp")) 
+hcr_sf <- st_transform(hcr_sf, crs = "+init=epsg:5070")
+ssurgo_dem_svi_r <- raster("ssurgo_svi_num_slope_10m.tif")
+solim_dem_svi_r  <- raster("solim_svi_num_slope.tif")
+
+# ssurgo_svi_tm
+svi_sf %>% mutate(svi_num = factor(svi_num, levels = 1:4)) %>%
+tm_shape(bbox = tmaptools::bb(hcr_sf)) + 
+  tm_polygons("svi_num", title = "SVI", border.col = NULL, palette = viridis::viridis_pal()(4)) +
+  tm_shape(hcr_sf) + tm_borders(lwd = 2, col = "black") +
+  tm_layout(main.title = "SSURGO",
+            legend.position = c("left", "bottom"), 
+            legend.bg.color = "white"
+            )
+# ssurgo_dem_svi_tm
+tm_shape(ssurgo_dem_svi_r, bbox = tmaptools::bb(hcr_sf)) + 
+  tm_raster(title = "SVI", breaks = 1:5, palette = viridis::viridis_pal()(4)) +
+  tm_shape(hcr_sf) + tm_borders(lwd = 2, col = "black") +
+  tm_layout(main.title = "SSURGO + DEM", 
+            legend.position = c("left", "bottom"), 
+            legend.bg.color = "white"
+            )
+# solim_dem_svi_tm
+tm_shape(solim_dem_svi_r, bbox = tmaptools::bb(hcr_sf)) + 
+  tm_raster(title = "SVI", breaks = 1:5, palette = viridis::viridis_pal()(4)) +
+  tm_shape(hcr_sf) + tm_borders(lwd = 2, col = "black") +
+  tm_layout(main.title = "SoLIM + SSURGO + DEM", 
+            legend.position = c("left", "bottom"), 
+            legend.bg.color = "white"
+            )
+
+```
+
+
+# Conclusions
+
+The comparison between the SVI calculated from SSSURGO vs SSURGO + DEM are similar to results of Chan et al. (2017), although Chan et al. (2017) found less overlap due to greater differences between the SSURGO and NED slope values.
+
+Deriving soil interpretations from DSM represent several challenges. For starters their is a mismatch between the variety of criteria used for soil interpretations and the limited number of soil properties and depth intervals estimated by most DSM. DSM of soil properties typically produce estimates for depth intervals (e.g. 0-5, 5-15, 15-30, 30-60, 60-100, 100-200). To match the depth range criteria of a variety of soil interpretations DSM would either have to produce estimates at 1-cm depth intervals or interpolate between the standard depth intervals with depth splines (e.g. equal area). Computationally it is simpler to derive soil interpretations for a limited range of soil classes, rather than a million pixels. The classes could then be converted to continuous range using the fuzzy mixing of class membership originally demonstrated using SoLIM, if the interpretation rating used a fuzzy ranking.
+
+It would be beneficial if new DSM products considered what was required to generate RBI. 
+
+One of primary arguments for DSM is that it produces maps that contain greater spatial detail. The Ksat layer produced by Libohova et al. (2018) do have greater spatial detail, but that detail is over spread over such a narrow range values that it becomes insignificant. This result is similar to the results of the SVI interpretation, where the addition of the spatial detail is overridden when the slope exceeds 6%. The irony is that DSM is presumed to be more feasible in areas of high relief because DEM derivatives explain more soil variation, but most soil interpretations are generally limited on steep slopes. Therefore the more detailed DSM are less informative than they might otherwise be. This may not be the case for hydrologic and conservation models that require soil properties.
+
+
+
+# References
+
+Chan, R., Thompson, A. & Sadler, J., 2017. Validating the Soil Vulnerability Index for a claypan watershed. CATENA, 1 1, Volume 148, pp. 185-194.
+
+Horn, B. K. P., 1981. Hill Shading and the Reflectance Map, Proceedings of the IEEE, 69(1):14-47. 
+
+Lee, S. et al., 2018. Assessing the suitability of the Soil Vulnerability Index (SVI) on identifying croplands vulnerable to nitrogen loss using the SWAT model. CATENA, 1 8, Volume 167, pp. 1-12.
+
+Libohova, Z. et al., 2018. Soil Systems for Upscaling Saturated Hydraulic Conductivity for Hydrological Modeling in the Critical Zone. Vadose Zone Journal, 30 9, 17(1), p. 20.
+
+USDA-NRCS, 2012. Assessment of the Effects of Conservation Practices on Cultivated Cropland in the Missouri River Basin, s.l.: s.n.
+
+
