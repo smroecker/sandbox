@@ -1,47 +1,163 @@
-library(lattice)
+
+# sp version ----
 library(sp)
-library(raster)
-library(clhs)
+
 
 # Create a sixteen square polygon
 grd <- GridTopology(c(1, 1), c(1, 1), c(4, 4))
 polys <- as.SpatialPolygons.GridTopology(grd)
 
-png(file = "sample_comparison.png", width = 8, height = 3, units = "in", res = 300)
-par(mfrow = c(1, 3))
-plot(polys, main = "Simple random sample", cex.main = 1.5)
+# graphic paramaters
+png(file = "sample_comparison.png", width = 7, height = 2, units = "in", res = 300)
+par(mfrow = c(1, 4), mar = c(0, 0, 1, 0))
+
+
+## Simple ----
+plot(polys, main = "Simple", cex.main = 1.5)
 test <- spsample(polys, n = 16, type = "random")
 points(test, pch = 16, cex = 2)
 
-plot(polys, main = "Systematic sample", cex.main = 1.5)
-# Generate systematic random sample
-test <- spsample(polys, n = 16, type = "regular")
-points(test, pch = 16, cex = 2)
 
-plot(polys, main = "Stratified random sample", cex.main = 1.5)
+## Stratified ----
+plot(polys, main = "Stratified", cex.main = 1.5)
 # Generate a spatially stratified random sample
 # test <- spsample(polys, n = 16, type = "stratified")
 # points(test, pch = 16, cex = 2)
-
 s <- sapply(slot(polys, 'polygons'), function(x) spsample(x, n = 1, type = "random"))
 s <- do.call("rbind", s)
 points(s, pch = 16, cex = 2) # randomly select 1 square and plot
 
 
-dev.off()
-
-
-png(file = "sample_multistage.png", width = 3, height = 3, units = "in", res = 300)
-par(fin = c(3, 3), mai = c(0, 1, 0, 0))
-plot(polys, main = "Two-stage random", cex.main = 2)
-
+## Two-stage ----
+plot(polys, main = "Two-stage", cex.main = 1.5)
 # Select 8 samples from each square
 s <- sapply(slot(polys, 'polygons'), function(x) spsample(x, n = 8, type = "random"))
 points(sample(s, 1)[[1]], pch = 16, cex = 2) # randomly select 1 square and plot
 points(sample(s, 1)[[1]], pch = 16, cex = 2) # randomly select 1 square and plot
 
+
+## Systematic ----
+plot(polys, main = "Systematic", cex.main = 1.5)
+# Generate systematic random sample
+test <- spsample(polys, n = 16, type = "regular")
+points(test, pch = 16, cex = 2)
+
+
 dev.off()
 
+
+polys_sdf <- SpatialPolygonsDataFrame(
+  polys,
+  data = data.frame(
+    z = rnorm(length(polys)),
+    # x = coordinates(polys)[, 1],
+    # y = coordinates(polys)[, 2],
+    row.names = row.names(polys)
+    )
+  )
+
+pts_sdf <- SpatialPointsDataFrame(
+  data = data.frame(z = polys_sdf$z),
+  coords = cbind(polys_sdf$x, polys_sdf$y)
+)
+
+
+polys_sf <- st_as_sf(polys_sdf)
+pts_sf   <- st_centroid(polys_sf)
+
+
+# sf version ----
+library(sf)
+library(ggplot2)
+
+
+# Create a sixteen square polygon
+set.seed(4)
+
+bb <- st_make_grid(st_bbox(c(xmin = 0, xmax = 4, ymin = 0, ymax = 4)), n = 4)
+grd <- cbind(
+  data.frame(
+    z = rnorm(length(bb), mean = 15, sd = 5),
+    s = rlnorm(length(bb), mean = 2, sd = 1)
+  ), 
+  bb
+)
+grd <- st_as_sf(grd, sf_column_name = "geometry")
+test_pts <- st_centroid(grd)
+
+
+## Simple ----
+test <- st_sample(grd, size = 10, type = "random")
+
+gg_srs <- ggplot() + 
+  geom_sf(data = grd) + 
+  geom_sf(data = test) + 
+  theme(axis.ticks = element_blank(), axis.text = element_blank(), title()) +
+  ggtitle("Simple")
+gg_srs
+
+
+## Stratified ----
+test <- sapply(1:nrow(grd), function(i) {
+  st_sample(grd[i, ], size = 1, type = "random")
+})
+test <- st_sfc(test)
+
+gg_strs <- ggplot() + 
+  geom_sf(data = grd) + 
+  geom_sf(data = test) + 
+  theme(axis.ticks = element_blank(), axis.text = element_blank()) +
+  ggtitle("Stratified")
+gg_strs
+
+
+## Two-stage ----
+# Select 8 samples from each square
+idx <- sample(1:nrow(grd), size = 2)
+grd_sub <- grd[idx, ]
+test <- sapply(1:2, function(i) {
+  st_coordinates(st_sample(grd_sub[i, ], size = 8, type = "random"))
+})
+test <- st_as_sf(as.data.frame(test), coords = 1:2)
+
+gg_2srs <- ggplot() + 
+  geom_sf(data = grd) + 
+  geom_sf(data = test) + 
+  theme(axis.ticks = element_blank(), axis.text = element_blank()) +
+  ggtitle("Two-stage")
+gg_2srs
+
+
+## Systematic ----
+test <- st_sample(grd, size = 16, type = "regular")
+gg_syrs <- ggplot() + 
+  geom_sf(data = grd) + 
+  geom_sf(data = test) + 
+  theme(axis.ticks = element_blank(), axis.text = element_blank(), title()) +
+  ggtitle("Systematic")
+gg_syrs
+
+
+gg <- gridExtra::grid.arrange(gg_srs, gg_strs, gg_2srs, gg_syrs, nrow = 1)
+ggsave(gg, file = "sample_comparison_sf.png", width = 7, height = 2, units = "in", dpi = 300)
+
+
+## cLHS ----
+library(clhs)
+
+idx <- clhs(st_drop_geometry(grd), size = 4)
+
+ggplot() + 
+  geom_sf(data = grd, aes(fill = z)) + 
+  geom_sf(data = pts_sf[idx, ]) + 
+  scale_fill_viridis_c() +
+  theme(axis.ticks = element_blank(), axis.text = element_blank(), title()) +
+  ggtitle("cLHS")
+
+
+
+# raster examples ----
+library(raster)
 
 data(volcano) # details at http://geomorphometry.org/content/volcano-maungawhau
 volcano_r <- raster(as.matrix(volcano[87:1, 61:1]), crs = CRS("+init=epsg:27200"), xmn = 2667405, xmx = 2667405 + 61*10, ymn = 6478705, ymx = 6478705 + 87*10) # import volcano DEM
