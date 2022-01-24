@@ -76,14 +76,16 @@ set.seed(4)
 
 bb <- st_make_grid(st_bbox(c(xmin = 0, xmax = 4, ymin = 0, ymax = 4)), n = 4)
 grd <- cbind(
+  ID = as.character(1:length(bb)),
+  st_coordinates(st_centroid(bb))[, 1:2],
   data.frame(
-    z = rnorm(length(bb), mean = 15, sd = 5),
-    s = rlnorm(length(bb), mean = 2, sd = 1)
+    Z = rnorm(length(bb), mean = 15, sd = 5),
+    S = rlnorm(length(bb), mean = 2, sd = 1)
   ), 
   bb
 )
 grd <- st_as_sf(grd, sf_column_name = "geometry")
-test_pts <- st_centroid(grd)
+pts <- st_centroid(grd)
 
 
 ## Simple ----
@@ -92,7 +94,9 @@ test <- st_sample(grd, size = 10, type = "random")
 gg_srs <- ggplot() + 
   geom_sf(data = grd) + 
   geom_sf(data = test) + 
-  theme(axis.ticks = element_blank(), axis.text = element_blank(), title()) +
+  scale_x_continuous(breaks = (0:3) + 0.5, labels = 1:4) +
+  scale_y_continuous(breaks = (0:3) + 0.5, labels = 1:4) +
+  # theme(axis.ticks = element_blank(), axis.text = element_blank()) +
   ggtitle("Simple")
 gg_srs
 
@@ -106,14 +110,16 @@ test <- st_sfc(test)
 gg_strs <- ggplot() + 
   geom_sf(data = grd) + 
   geom_sf(data = test) + 
-  theme(axis.ticks = element_blank(), axis.text = element_blank()) +
+  scale_x_continuous(breaks = (0:3) + 0.5, labels = 1:4) +
+  scale_y_continuous(breaks = (0:3) + 0.5, labels = 1:4) +
+  # theme(axis.ticks = element_blank(), axis.text = element_blank()) +
   ggtitle("Stratified")
 gg_strs
 
 
 ## Two-stage ----
 # Select 8 samples from each square
-idx <- sample(1:nrow(grd), size = 2)
+idx <- sample(1:nrow(grd), size = 2, replace = FALSE)
 grd_sub <- grd[idx, ]
 test <- sapply(1:2, function(i) {
   st_coordinates(st_sample(grd_sub[i, ], size = 8, type = "random"))
@@ -123,7 +129,9 @@ test <- st_as_sf(as.data.frame(test), coords = 1:2)
 gg_2srs <- ggplot() + 
   geom_sf(data = grd) + 
   geom_sf(data = test) + 
-  theme(axis.ticks = element_blank(), axis.text = element_blank()) +
+  scale_x_continuous(breaks = (0:3) + 0.5, labels = 1:4) +
+  scale_y_continuous(breaks = (0:3) + 0.5, labels = 1:4) +
+  # theme(axis.ticks = element_blank(), axis.text = element_blank()) +
   ggtitle("Two-stage")
 gg_2srs
 
@@ -133,30 +141,66 @@ test <- st_sample(grd, size = 16, type = "regular")
 gg_syrs <- ggplot() + 
   geom_sf(data = grd) + 
   geom_sf(data = test) + 
-  theme(axis.ticks = element_blank(), axis.text = element_blank(), title()) +
+  scale_x_continuous(breaks = (0:3) + 0.5, labels = 1:4) +
+  scale_y_continuous(breaks = (0:3) + 0.5, labels = 1:4) +
+  # theme(axis.ticks = element_blank(), axis.text = element_blank()) +
   ggtitle("Systematic")
 gg_syrs
-
-
-gg <- gridExtra::grid.arrange(gg_srs, gg_strs, gg_2srs, gg_syrs, nrow = 1)
-ggsave(gg, file = "sample_comparison_sf.png", width = 7, height = 2, units = "in", dpi = 300)
 
 
 ## cLHS ----
 library(clhs)
 
-idx <- clhs(st_drop_geometry(grd), size = 4)
+idx1 <- clhs(st_drop_geometry(pts)[c("X", "Y")], size = 4)
+idx2 <- clhs(st_drop_geometry(grd),      size = 4)
 
-ggplot() + 
-  geom_sf(data = grd, aes(fill = z)) + 
-  geom_sf(data = pts_sf[idx, ]) + 
-  scale_fill_viridis_c() +
-  theme(axis.ticks = element_blank(), axis.text = element_blank(), title()) +
+gg_clhs <- ggplot() + 
+  geom_sf(data = grd) + 
+  # geom_sf(data = grd, aes(fill = z)) + 
+  geom_sf(data = pts[idx1, ]) + 
+  scale_x_continuous(breaks = (0:3) + 0.5, labels = 1:4) +
+  scale_y_continuous(breaks = (0:3) + 0.5, labels = 1:4) +
+  # scale_fill_viridis_c() +
+  # theme(axis.ticks = element_blank(), axis.text = element_blank()) +
   ggtitle("cLHS")
+gg_clhs
+
+
+## spcosa ----
+library(spcosa)
+
+grd_sp <- as(grd, "Spatial")
+
+strata <- stratify(grd_sp, nStrata = 5) 
+pts    <- spsample(strata)
+gg_spcosa <- plot(strata, pts) + 
+  scale_x_continuous(breaks = (0:3) + 0.5, labels = 1:4) +
+  scale_y_continuous(breaks = (0:3) + 0.5, labels = 1:4) +
+  theme(axis.title = element_blank()) +
+  ggtitle("Spatial Coverage")
+
+
+gg <- gridExtra::grid.arrange(gg_srs, gg_strs, gg_2srs, gg_syrs, gg_clhs, gg_spcosa, nrow = 2)
+ggsave(gg, file = "sample_comparison_sf2.png", width = 6, height = 4, units = "in", dpi = 300)
+
+## spsurvey ----
+library(spsurvey)
+
+st_crs(grd) <- 5070
+grd$prob <- runif(16)
+
+test <- grts(sframe = grd, n_base = 4, aux_var = "prob", seltype = "proportional")
+gg_grts <- ggplot() + 
+  geom_sf(data = grd, aes(fill = S)) + 
+  geom_sf(data = test$sites_base) + 
+  scale_fill_gradient(low = "black", high = "white") +
+  theme(axis.ticks = element_blank(), axis.text = element_blank()) +
+  ggtitle("GRTS")
+gg_grts
 
 
 
-# raster examples ----
+  # raster examples ----
 library(raster)
 
 data(volcano) # details at http://geomorphometry.org/content/volcano-maungawhau
